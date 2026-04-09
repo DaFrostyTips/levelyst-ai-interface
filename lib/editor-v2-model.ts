@@ -96,11 +96,9 @@ export interface CommandContext {
   mode: EditorMode
   selectedNodeCount: number
   readiness: SimulationReadiness["status"]
-  credits: number
 }
 
 export type UiBlockerState =
-  | "credits_exhausted"
   | "missing_dependencies"
   | "no_compatible_modules"
   | "simulation_error"

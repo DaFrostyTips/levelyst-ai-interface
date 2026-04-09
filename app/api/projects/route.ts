@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server"
 import { z } from "zod"
 import { genreSchema, runtimeTargetSchema } from "@levelyst/contracts"
-import { createDemoModeReadonlyResponse, isLevelystDemoMode } from "@/lib/server/levelyst/deploy-mode"
+import { createDemoModeReadonlyResponse } from "@/lib/server/levelyst/deploy-mode"
 import { getLevelystRepository } from "@/lib/server/levelyst/project-repository"
+import { getLevelystRequestContextForRoute } from "@/lib/server/levelyst/request-context"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -16,21 +17,23 @@ const createProjectRequestSchema = z
   })
   .strict()
 
-export async function GET() {
-  const repository = getLevelystRepository()
+export async function GET(request: Request) {
+  const context = await getLevelystRequestContextForRoute(request)
+  const repository = await getLevelystRepository(context)
   return NextResponse.json({
-    projects: repository.listProjectSummaries(),
+    projects: await repository.listProjectSummaries(),
   })
 }
 
 export async function POST(request: Request) {
-  if (isLevelystDemoMode()) {
+  const context = await getLevelystRequestContextForRoute(request)
+  if (context.deployMode === "demo") {
     return createDemoModeReadonlyResponse()
   }
 
-  const repository = getLevelystRepository()
+  const repository = await getLevelystRepository(context)
   const body = createProjectRequestSchema.parse(await request.json().catch(() => ({})))
-  const project = repository.createProject(body)
+  const project = await repository.createProject(body)
   return NextResponse.json({
     project,
   })

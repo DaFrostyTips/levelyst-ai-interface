@@ -1,7 +1,8 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "env": {
-    "LEVELYST_DEPLOY_MODE": "demo",
-    "LEVELYST_PLANNER_PROVIDER": "rule_based"
+    "LEVELYST_DEPLOY_MODE": "public",
+    "LEVELYST_PLANNER_PROVIDER": "rule_based",
+    "LEVELYST_OPENAI_MODEL": "gpt-5-mini"
   }
 }

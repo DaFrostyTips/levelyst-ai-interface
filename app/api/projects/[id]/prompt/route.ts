@@ -1,7 +1,13 @@
 import { NextResponse } from "next/server"
 import { z } from "zod"
-import { createDemoModeReadonlyResponse, isLevelystDemoMode } from "@/lib/server/levelyst/deploy-mode"
+import {
+  createAiUnavailableResponse,
+  createDemoModeReadonlyResponse,
+  createRateLimitedResponse,
+} from "@/lib/server/levelyst/deploy-mode"
+import { checkPublicPromptRateLimit } from "@/lib/server/levelyst/public-rate-limit"
 import { getLevelystRepository } from "@/lib/server/levelyst/project-repository"
+import { getLevelystRequestContextForRoute } from "@/lib/server/levelyst/request-context"
 import { isPlannerError } from "@/lib/server/levelyst/planner-service"
 import { planProjectPromptReview } from "@/lib/server/levelyst/prompt-review-service"
 
@@ -16,14 +22,22 @@ const promptRequestSchema = z
   .strict()
 
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
-  if (isLevelystDemoMode()) {
+  const requestContext = await getLevelystRequestContextForRoute(request)
+  if (requestContext.deployMode === "demo") {
     return createDemoModeReadonlyResponse()
   }
 
-  const repository = getLevelystRepository()
+  if (requestContext.deployMode === "public") {
+    const rateLimit = await checkPublicPromptRateLimit(requestContext)
+    if (!rateLimit.ok) {
+      return createRateLimitedResponse(rateLimit.retryAfterSeconds)
+    }
+  }
+
+  const repository = await getLevelystRepository(requestContext)
   const params = await context.params
   const body = promptRequestSchema.parse(await request.json())
-  const project = repository.getProjectDetail(params.id)
+  const project = await repository.getProjectDetail(params.id)
 
   if (!project) {
     return NextResponse.json({ error: "Project not found." }, { status: 404 })
@@ -38,11 +52,15 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     })
   } catch (error) {
     if (isPlannerError(error)) {
+      if (error.code === "misconfigured") {
+        return createAiUnavailableResponse(error.message)
+      }
+
       return NextResponse.json(
         {
           error: error.message,
         },
-        { status: error.code === "misconfigured" ? 503 : 502 },
+        { status: 502 },
       )
     }
 
@@ -58,7 +76,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     blueprint_state: "review" as const,
   }
 
-  const updatedProject = repository.updateProject(project.id, {
+  const updatedProject = await repository.updateProject(project.id, {
     name:
       plannedReview.mode === "replace" && shouldRenameProject(project.name)
         ? deriveProjectName(body.prompt)

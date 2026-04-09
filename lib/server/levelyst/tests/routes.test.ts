@@ -2,7 +2,6 @@ import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { PlannerError } from "@/lib/server/levelyst/planner-service"
 
 describe("Phase 4 route handlers", () => {
   let dbDir = ""
@@ -15,14 +14,94 @@ describe("Phase 4 route handlers", () => {
 
   afterEach(() => {
     delete process.env.LEVELYST_DB_PATH
+    delete process.env.LEVELYST_DEPLOY_MODE
     delete process.env.LEVELYST_PLANNER_PROVIDER
     delete process.env.LEVELYST_LOCAL_AI_MODE
     delete process.env.LEVELYST_LOCAL_AI_MODEL
     delete process.env.LEVELYST_LOCAL_AI_TIMEOUT_MS
     delete process.env.OPENAI_API_KEY
     fs.rmSync(dbDir, { recursive: true, force: true })
+    vi.doUnmock("@/lib/server/levelyst/project-repository")
+    vi.doUnmock("@/lib/server/levelyst/public-rate-limit")
+    vi.resetModules()
     vi.unstubAllGlobals()
     vi.restoreAllMocks()
+  })
+
+  it("scopes public project listings by anonymous session cookie", async () => {
+    process.env.LEVELYST_DEPLOY_MODE = "public"
+    vi.resetModules()
+
+    vi.doMock("@/lib/server/levelyst/project-repository", () => ({
+      getLevelystRepository: async (context: { ownerSessionId: string }) => ({
+        listProjectSummaries: async () =>
+          context.ownerSessionId === "sessionalpha123456"
+            ? [{ id: "alpha-project", name: "Alpha Project" }]
+            : [{ id: "beta-project", name: "Beta Project" }],
+      }),
+    }))
+
+    const projectsRoute = await import("@/app/api/projects/route")
+
+    const alphaResponse = await projectsRoute.GET(
+      new Request("http://localhost/api/projects", {
+        headers: {
+          cookie: "levelyst_session=sessionalpha123456",
+        },
+      }),
+    )
+    const betaResponse = await projectsRoute.GET(
+      new Request("http://localhost/api/projects", {
+        headers: {
+          cookie: "levelyst_session=sessionbeta1234567",
+        },
+      }),
+    )
+
+    const alphaPayload = await alphaResponse.json()
+    const betaPayload = await betaResponse.json()
+
+    expect(alphaPayload.projects).toEqual([{ id: "alpha-project", name: "Alpha Project" }])
+    expect(betaPayload.projects).toEqual([{ id: "beta-project", name: "Beta Project" }])
+  })
+
+  it("returns 429 in public mode when prompt planning is rate-limited", async () => {
+    process.env.LEVELYST_DEPLOY_MODE = "public"
+    vi.resetModules()
+
+    vi.doMock("@/lib/server/levelyst/public-rate-limit", () => ({
+      checkPublicPromptRateLimit: async () => ({
+        ok: false,
+        retryAfterSeconds: 42,
+        sessionRemaining: 0,
+        ipRemaining: 0,
+      }),
+    }))
+
+    vi.doMock("@/lib/server/levelyst/project-repository", () => ({
+      getLevelystRepository: async () => ({
+        getProjectDetail: async () => null,
+      }),
+    }))
+
+    const promptRoute = await import("@/app/api/projects/[id]/prompt/route")
+    const response = await promptRoute.POST(
+      new Request("http://localhost/api/projects/project_1/prompt", {
+        method: "POST",
+        headers: {
+          cookie: "levelyst_session=sessionalpha123456",
+        },
+        body: JSON.stringify({
+          prompt: "Create a 2D platformer with coins and checkpoints",
+        }),
+      }),
+      { params: Promise.resolve({ id: "project_1" }) },
+    )
+
+    const payload = await response.json()
+    expect(response.status).toBe(429)
+    expect(payload.code).toBe("rate_limited")
+    expect(payload.retry_after_seconds).toBe(42)
   })
 
   it("supports prompt -> blueprint -> generate -> spec retrieval through route handlers", async () => {
@@ -231,6 +310,98 @@ describe("Phase 4 route handlers", () => {
     expect(promptPayload.error).toContain("OPENAI_API_KEY")
   })
 
+  it("still uses rule-based planning in public mode even when OPENAI is requested", async () => {
+    process.env.LEVELYST_DEPLOY_MODE = "public"
+    process.env.LEVELYST_PLANNER_PROVIDER = "openai"
+    vi.resetModules()
+
+    const projectStore = new Map<string, {
+      id: string
+      name: string
+      runtime_target: "web_2d"
+      blueprint_json: null
+      workspace_json: {
+        prompt: string
+        pending_blueprint: null
+        pending_blueprint_diagnostics: null
+        pending_prompt_mode: null
+        blueprint_state: "idle"
+      }
+    }>()
+
+    vi.doMock("@/lib/server/levelyst/project-repository", () => ({
+      getLevelystRepository: async () => ({
+        createProject: async (input: { name?: string }) => {
+          const project = {
+            id: "public-project-1",
+            name: input.name ?? "New Project",
+            runtime_target: "web_2d" as const,
+            blueprint_json: null,
+            workspace_json: {
+              prompt: "",
+              pending_blueprint: null,
+              pending_blueprint_diagnostics: null,
+              pending_prompt_mode: null,
+              blueprint_state: "idle" as const,
+            },
+          }
+          projectStore.set(project.id, project)
+          return project
+        },
+        getProjectDetail: async (projectId: string) => projectStore.get(projectId) ?? null,
+        updateProject: async (projectId: string, patch: { name?: string; workspace_json?: unknown }) => {
+          const current = projectStore.get(projectId)
+          if (!current) {
+            throw new Error("Project not found.")
+          }
+          const nextProject = {
+            ...current,
+            name: patch.name ?? current.name,
+            workspace_json: patch.workspace_json ?? current.workspace_json,
+          }
+          projectStore.set(projectId, nextProject)
+          return nextProject
+        },
+      }),
+    }))
+
+    const projectsRoute = await import("@/app/api/projects/route")
+    const promptRoute = await import("@/app/api/projects/[id]/prompt/route")
+    const sessionCookie = "levelyst_session=publicsession123456"
+
+    const createResponse = await projectsRoute.POST(
+      new Request("http://localhost/api/projects", {
+        method: "POST",
+        headers: {
+          cookie: sessionCookie,
+        },
+        body: JSON.stringify({
+          name: "Public Rule Planner",
+          runtime_target: "web_2d",
+        }),
+      }),
+    )
+    const createPayload = await createResponse.json()
+    const projectId = createPayload.project.id as string
+
+    const promptResponse = await promptRoute.POST(
+      new Request(`http://localhost/api/projects/${projectId}/prompt`, {
+        method: "POST",
+        headers: {
+          cookie: sessionCookie,
+        },
+        body: JSON.stringify({
+          prompt: "Create a 2D platformer with coins and checkpoints",
+        }),
+      }),
+      { params: Promise.resolve({ id: projectId }) },
+    )
+
+    const promptPayload = await promptResponse.json()
+    expect(promptResponse.status).toBe(200)
+    expect(promptPayload.project.workspace_json.pending_blueprint.game_type).toBe("2d_platformer")
+  })
+
   it("still returns a prompt review when the local wording layer is enabled but Ollama is offline", async () => {
     process.env.LEVELYST_LOCAL_AI_MODE = "copy_only"
     vi.stubGlobal(
@@ -274,10 +445,11 @@ describe("Phase 4 route handlers", () => {
   it("returns 502 when the planner exhausts retries", async () => {
     const projectsRoute = await import("@/app/api/projects/route")
     const plannerService = await import("@/lib/server/levelyst/planner-service")
+    const promptReviewService = await import("@/lib/server/levelyst/prompt-review-service")
     const promptRoute = await import("@/app/api/projects/[id]/prompt/route")
 
-    vi.spyOn(plannerService, "planPromptWithDiagnostics").mockRejectedValue(
-      new PlannerError("failed", "invalid_output", "Planner exhausted retries."),
+    vi.spyOn(promptReviewService, "planProjectPromptReview").mockRejectedValue(
+      new plannerService.PlannerError("failed", "invalid_output", "Planner exhausted retries."),
     )
 
     const createResponse = await projectsRoute.POST(

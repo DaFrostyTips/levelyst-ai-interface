@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server"
 import { z } from "zod"
 import { blueprintPlanSchema } from "@levelyst/contracts"
-import { createDemoModeReadonlyResponse, isLevelystDemoMode } from "@/lib/server/levelyst/deploy-mode"
+import { createDemoModeReadonlyResponse } from "@/lib/server/levelyst/deploy-mode"
 import { getLevelystRepository } from "@/lib/server/levelyst/project-repository"
+import { getLevelystRequestContextForRoute } from "@/lib/server/levelyst/request-context"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -14,13 +15,14 @@ const patchBlueprintRequestSchema = z
   .strict()
 
 export async function PATCH(request: Request, context: { params: Promise<{ id: string }> }) {
-  if (isLevelystDemoMode()) {
+  const requestContext = await getLevelystRequestContextForRoute(request)
+  if (requestContext.deployMode === "demo") {
     return createDemoModeReadonlyResponse()
   }
 
-  const repository = getLevelystRepository()
+  const repository = await getLevelystRepository(requestContext)
   const params = await context.params
-  const project = repository.getProjectDetail(params.id)
+  const project = await repository.getProjectDetail(params.id)
 
   if (!project) {
     return NextResponse.json({ error: "Project not found." }, { status: 404 })
@@ -28,7 +30,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
 
   const body = patchBlueprintRequestSchema.parse(await request.json())
 
-  const updatedProject = repository.updateProject(project.id, {
+  const updatedProject = await repository.updateProject(project.id, {
     workspace_json: {
       ...project.workspace_json,
       pending_blueprint: body.blueprint_json,

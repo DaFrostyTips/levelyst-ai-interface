@@ -21,22 +21,22 @@ function createRepository() {
 }
 
 describe("SqliteProjectRepository", () => {
-  it("seeds default projects and returns summaries", () => {
+  it("seeds default projects and returns summaries", async () => {
     const repository = createRepository()
-    const summaries = repository.listProjectSummaries()
+    const summaries = await repository.listProjectSummaries()
 
     expect(summaries.length).toBeGreaterThanOrEqual(3)
     expect(summaries[0]?.id).toBeTruthy()
   })
 
-  it("creates and updates projects with persisted canonical JSON blobs", () => {
+  it("creates and updates projects with persisted canonical JSON blobs", async () => {
     const repository = createRepository()
-    const created = repository.createProject({
+    const created = await repository.createProject({
       name: "Backend Project",
       runtime_target: "web_2d",
     })
 
-    const updated = repository.updateProject(created.id, {
+    const updated = await repository.updateProject(created.id, {
       blueprint_json: {
         game_type: "2d_platformer",
         core_systems: ["player/platformer_controller", "camera/side_scroll"],
@@ -57,15 +57,15 @@ describe("SqliteProjectRepository", () => {
     })
 
     expect(updated.blueprint_json?.game_type).toBe("2d_platformer")
-    expect(repository.getProjectDetail(created.id)?.blueprint_json?.required_modules).toHaveLength(5)
+    expect((await repository.getProjectDetail(created.id))?.blueprint_json?.required_modules).toHaveLength(5)
   })
 
-  it("creates jobs and persists ordered events", () => {
+  it("creates jobs and persists ordered events", async () => {
     const repository = createRepository()
-    const project = repository.createProject({ name: "Job Project" })
-    const job = repository.createJob(project.id)
+    const project = await repository.createProject({ name: "Job Project" })
+    const job = await repository.createJob(project.id)
 
-    repository.replaceJobEvents(job.id, [
+    await repository.replaceJobEvents(job.id, [
       {
         job_id: job.id,
         sequence: 0,
@@ -86,18 +86,18 @@ describe("SqliteProjectRepository", () => {
       },
     ])
 
-    const events = repository.listJobEvents(job.id)
+    const events = await repository.listJobEvents(job.id)
     expect(events.map((event) => event.event_type)).toEqual(["job_started", "job_completed"])
   })
 
-  it("deletes projects and cascades associated jobs", () => {
+  it("deletes projects and cascades associated jobs", async () => {
     const repository = createRepository()
-    const project = repository.createProject({ name: "Delete Target" })
-    const job = repository.createJob(project.id)
+    const project = await repository.createProject({ name: "Delete Target" })
+    const job = await repository.createJob(project.id)
 
-    repository.deleteProject(project.id)
+    await repository.deleteProject(project.id)
 
-    expect(repository.getProjectDetail(project.id)).toBeNull()
-    expect(repository.getJob(job.id)).toBeNull()
+    expect(await repository.getProjectDetail(project.id)).toBeNull()
+    expect(await repository.getJob(job.id)).toBeNull()
   })
 })

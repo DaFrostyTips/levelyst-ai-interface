@@ -4,13 +4,10 @@ import {
   editorWorkspaceSnapshotSchema,
   generationJobEventSchema,
   generationJobSchema,
-  moduleGraphSchema,
   projectDetailSchema,
   projectSummarySchema,
-  type EditorWorkspaceSnapshot,
   type GenerationJob,
   type GenerationJobEvent,
-  type ModuleGraph,
   type ProjectDetail,
   type ProjectSummary,
 } from "@levelyst/contracts"
@@ -23,7 +20,8 @@ import {
   summarizeModuleGraph,
 } from "./defaults"
 import { getDemoProject, listDemoProjects } from "./demo-projects"
-import { getLevelystDeployMode } from "./deploy-mode"
+import { PostgresProjectRepository } from "./public-project-repository"
+import type { LevelystRequestContext } from "./request-context"
 
 type DatabaseSync = import("node:sqlite").DatabaseSync
 
@@ -48,17 +46,17 @@ export interface UpdateProjectInput {
 }
 
 export interface LevelystRepository {
-  listProjectSummaries(): ProjectSummary[]
-  listProjectDetails(): ProjectDetail[]
-  getProjectDetail(projectId: string): ProjectDetail | null
-  deleteProject(projectId: string): ProjectDetail
-  createProject(input?: CreateProjectInput): ProjectDetail
-  updateProject(projectId: string, input: UpdateProjectInput): ProjectDetail
-  createJob(projectId: string, kind?: GenerationJob["kind"]): GenerationJob
-  updateJob(jobId: string, patch: Partial<Pick<GenerationJob, "status" | "error_message">>): GenerationJob
-  getJob(jobId: string): GenerationJob | null
-  listJobEvents(jobId: string): GenerationJobEvent[]
-  replaceJobEvents(jobId: string, events: GenerationJobEvent[]): void
+  listProjectSummaries(): Promise<ProjectSummary[]>
+  listProjectDetails(): Promise<ProjectDetail[]>
+  getProjectDetail(projectId: string): Promise<ProjectDetail | null>
+  deleteProject(projectId: string): Promise<ProjectDetail>
+  createProject(input?: CreateProjectInput): Promise<ProjectDetail>
+  updateProject(projectId: string, input: UpdateProjectInput): Promise<ProjectDetail>
+  createJob(projectId: string, kind?: GenerationJob["kind"]): Promise<GenerationJob>
+  updateJob(jobId: string, patch: Partial<Pick<GenerationJob, "status" | "error_message">>): Promise<GenerationJob>
+  getJob(jobId: string): Promise<GenerationJob | null>
+  listJobEvents(jobId: string): Promise<GenerationJobEvent[]>
+  replaceJobEvents(jobId: string, events: GenerationJobEvent[]): Promise<void>
 }
 
 const repositoryCache = new Map<string, SqliteProjectRepository>()
@@ -68,10 +66,14 @@ function loadDatabaseSync(): typeof import("node:sqlite").DatabaseSync {
   return (require("node:sqlite") as typeof import("node:sqlite")).DatabaseSync
 }
 
-export function getLevelystRepository(): LevelystRepository {
-  if (getLevelystDeployMode() === "demo") {
+export async function getLevelystRepository(context: LevelystRequestContext): Promise<LevelystRepository> {
+  if (context.deployMode === "demo") {
     demoRepository ??= new DemoProjectRepository()
     return demoRepository
+  }
+
+  if (context.deployMode === "public") {
+    return new PostgresProjectRepository(context.ownerSessionId)
   }
 
   const dbPath = resolveDatabasePath()
@@ -142,27 +144,28 @@ export class SqliteProjectRepository implements LevelystRepository {
     this.seedDefaultProjects()
   }
 
-  listProjectSummaries(): ProjectSummary[] {
+  async listProjectSummaries(): Promise<ProjectSummary[]> {
     const statement = this.db.prepare(`
       SELECT id, name, genre, runtime_target, preview_thumbnail, module_count, systems_summary_json, simulation_ready, created_at, updated_at
       FROM projects
       ORDER BY updated_at DESC
     `)
 
-    return statement.all().map((row) => toProjectSummary(row))
+    return statement.all().map((row) => toProjectSummary(row as Record<string, unknown>))
   }
 
-  listProjectDetails(): ProjectDetail[] {
+  async listProjectDetails(): Promise<ProjectDetail[]> {
     const statement = this.db.prepare(`
       SELECT *
       FROM projects
       ORDER BY updated_at DESC
     `)
 
-    return statement.all().map((row) => this.toProjectDetail(row))
+    const rows = statement.all() as Record<string, unknown>[]
+    return Promise.all(rows.map((row) => this.toProjectDetail(row)))
   }
 
-  getProjectDetail(projectId: string): ProjectDetail | null {
+  async getProjectDetail(projectId: string): Promise<ProjectDetail | null> {
     const statement = this.db.prepare(`
       SELECT *
       FROM projects
@@ -170,12 +173,12 @@ export class SqliteProjectRepository implements LevelystRepository {
       LIMIT 1
     `)
 
-    const row = statement.get(projectId)
+    const row = statement.get(projectId) as Record<string, unknown> | undefined
     return row ? this.toProjectDetail(row) : null
   }
 
-  deleteProject(projectId: string) {
-    const current = this.getProjectDetail(projectId)
+  async deleteProject(projectId: string): Promise<ProjectDetail> {
+    const current = await this.getProjectDetail(projectId)
     if (!current) {
       throw new Error(`Project "${projectId}" was not found.`)
     }
@@ -189,9 +192,9 @@ export class SqliteProjectRepository implements LevelystRepository {
     return current
   }
 
-  createProject(input: CreateProjectInput = {}): ProjectDetail {
+  async createProject(input: CreateProjectInput = {}): Promise<ProjectDetail> {
     if (input.duplicate_from) {
-      const source = this.getProjectDetail(input.duplicate_from)
+      const source = await this.getProjectDetail(input.duplicate_from)
       if (!source) {
         throw new Error(`Cannot duplicate unknown project "${input.duplicate_from}".`)
       }
@@ -237,8 +240,8 @@ export class SqliteProjectRepository implements LevelystRepository {
     return project
   }
 
-  updateProject(projectId: string, input: UpdateProjectInput): ProjectDetail {
-    const current = this.getProjectDetail(projectId)
+  async updateProject(projectId: string, input: UpdateProjectInput): Promise<ProjectDetail> {
+    const current = await this.getProjectDetail(projectId)
     if (!current) {
       throw new Error(`Project "${projectId}" was not found.`)
     }
@@ -304,7 +307,7 @@ export class SqliteProjectRepository implements LevelystRepository {
     return next
   }
 
-  createJob(projectId: string, kind: GenerationJob["kind"] = "prototype_generation"): GenerationJob {
+  async createJob(projectId: string, kind: GenerationJob["kind"] = "prototype_generation"): Promise<GenerationJob> {
     const timestamp = new Date().toISOString()
     const job = generationJobSchema.parse({
       id: createId("job"),
@@ -325,8 +328,8 @@ export class SqliteProjectRepository implements LevelystRepository {
     return job
   }
 
-  updateJob(jobId: string, patch: Partial<Pick<GenerationJob, "status" | "error_message">>): GenerationJob {
-    const current = this.getJob(jobId)
+  async updateJob(jobId: string, patch: Partial<Pick<GenerationJob, "status" | "error_message">>): Promise<GenerationJob> {
+    const current = await this.getJob(jobId)
     if (!current) {
       throw new Error(`Job "${jobId}" was not found.`)
     }
@@ -347,18 +350,18 @@ export class SqliteProjectRepository implements LevelystRepository {
     return next
   }
 
-  getJob(jobId: string): GenerationJob | null {
+  async getJob(jobId: string): Promise<GenerationJob | null> {
     const statement = this.db.prepare(`
       SELECT *
       FROM jobs
       WHERE id = ?
       LIMIT 1
     `)
-    const row = statement.get(jobId)
+    const row = statement.get(jobId) as Record<string, unknown> | undefined
     return row ? toGenerationJob(row) : null
   }
 
-  listJobEvents(jobId: string): GenerationJobEvent[] {
+  async listJobEvents(jobId: string): Promise<GenerationJobEvent[]> {
     const statement = this.db.prepare(`
       SELECT job_id, sequence, event_type, payload_json, delay_ms
       FROM job_events
@@ -377,7 +380,7 @@ export class SqliteProjectRepository implements LevelystRepository {
     )
   }
 
-  replaceJobEvents(jobId: string, events: GenerationJobEvent[]) {
+  async replaceJobEvents(jobId: string, events: GenerationJobEvent[]): Promise<void> {
     const deleteStatement = this.db.prepare(`DELETE FROM job_events WHERE job_id = ?`)
 
     const insertStatement = this.db.prepare(`
@@ -427,20 +430,18 @@ export class SqliteProjectRepository implements LevelystRepository {
     )
   }
 
-  private toProjectDetail(row: Record<string, unknown>): ProjectDetail {
-    const project = projectDetailSchema.parse({
+  private async toProjectDetail(row: Record<string, unknown>): Promise<ProjectDetail> {
+    return projectDetailSchema.parse({
       ...toProjectSummary(row),
       blueprint_json: parseNullableSchema(row.blueprint_json, null),
       prototype_spec: parseNullableSchema(row.prototype_spec_json, null),
       module_graph: parseNullableSchema(row.module_graph_json, null),
       workspace_json: editorWorkspaceSnapshotSchema.parse(parseJson(row.workspace_json, createDefaultWorkspaceSnapshot())),
-      latest_job: this.getLatestJob(String(row.id)),
+      latest_job: await this.getLatestJob(String(row.id)),
     })
-
-    return project
   }
 
-  private getLatestJob(projectId: string): GenerationJob | null {
+  private async getLatestJob(projectId: string): Promise<GenerationJob | null> {
     const statement = this.db.prepare(`
       SELECT *
       FROM jobs
@@ -449,7 +450,7 @@ export class SqliteProjectRepository implements LevelystRepository {
       LIMIT 1
     `)
 
-    const row = statement.get(projectId)
+    const row = statement.get(projectId) as Record<string, unknown> | undefined
     return row ? toGenerationJob(row) : null
   }
 
@@ -482,56 +483,56 @@ export class SqliteProjectRepository implements LevelystRepository {
 class DemoProjectRepository implements LevelystRepository {
   private readonly projects = listDemoProjects()
 
-  listProjectSummaries(): ProjectSummary[] {
+  async listProjectSummaries(): Promise<ProjectSummary[]> {
     return this.projects.map((project) => toProjectSummaryFromDetail(project))
   }
 
-  listProjectDetails(): ProjectDetail[] {
+  async listProjectDetails(): Promise<ProjectDetail[]> {
     return this.projects.map((project) => cloneProjectDetail(project))
   }
 
-  getProjectDetail(projectId: string): ProjectDetail | null {
+  async getProjectDetail(projectId: string): Promise<ProjectDetail | null> {
     return getDemoProject(projectId)
   }
 
-  deleteProject(_projectId: string): ProjectDetail {
+  async deleteProject(_projectId: string): Promise<ProjectDetail> {
     throw new Error("Demo mode is read-only.")
   }
 
-  createProject(_input: CreateProjectInput = {}): ProjectDetail {
+  async createProject(_input: CreateProjectInput = {}): Promise<ProjectDetail> {
     throw new Error("Demo mode is read-only.")
   }
 
-  updateProject(_projectId: string, _input: UpdateProjectInput): ProjectDetail {
+  async updateProject(_projectId: string, _input: UpdateProjectInput): Promise<ProjectDetail> {
     throw new Error("Demo mode is read-only.")
   }
 
-  createJob(_projectId: string, _kind: GenerationJob["kind"] = "prototype_generation"): GenerationJob {
+  async createJob(_projectId: string, _kind: GenerationJob["kind"] = "prototype_generation"): Promise<GenerationJob> {
     throw new Error("Demo mode is read-only.")
   }
 
-  updateJob(_jobId: string, _patch: Partial<Pick<GenerationJob, "status" | "error_message">>): GenerationJob {
+  async updateJob(_jobId: string, _patch: Partial<Pick<GenerationJob, "status" | "error_message">>): Promise<GenerationJob> {
     throw new Error("Demo mode is read-only.")
   }
 
-  getJob(_jobId: string): GenerationJob | null {
+  async getJob(_jobId: string): Promise<GenerationJob | null> {
     return null
   }
 
-  listJobEvents(_jobId: string): GenerationJobEvent[] {
+  async listJobEvents(_jobId: string): Promise<GenerationJobEvent[]> {
     return []
   }
 
-  replaceJobEvents(_jobId: string, _events: GenerationJobEvent[]) {
+  async replaceJobEvents(_jobId: string, _events: GenerationJobEvent[]): Promise<void> {
     throw new Error("Demo mode is read-only.")
   }
 }
 
-function resolveDatabasePath() {
+export function resolveDatabasePath() {
   return process.env.LEVELYST_DB_PATH ?? path.join(process.cwd(), ".levelyst", "levelyst.sqlite")
 }
 
-function toProjectSummary(row: Record<string, unknown>): ProjectSummary {
+export function toProjectSummary(row: Record<string, unknown>): ProjectSummary {
   return projectSummarySchema.parse({
     id: String(row.id),
     name: String(row.name),
@@ -551,7 +552,7 @@ function toProjectSummary(row: Record<string, unknown>): ProjectSummary {
   })
 }
 
-function toProjectSummaryFromDetail(project: ProjectDetail): ProjectSummary {
+export function toProjectSummaryFromDetail(project: ProjectDetail): ProjectSummary {
   return projectSummarySchema.parse({
     id: project.id,
     name: project.name,
@@ -571,7 +572,7 @@ function toProjectSummaryFromDetail(project: ProjectDetail): ProjectSummary {
   })
 }
 
-function toGenerationJob(row: Record<string, unknown>): GenerationJob {
+export function toGenerationJob(row: Record<string, unknown>): GenerationJob {
   return generationJobSchema.parse({
     id: String(row.id),
     project_id: String(row.project_id),
@@ -583,11 +584,11 @@ function toGenerationJob(row: Record<string, unknown>): GenerationJob {
   })
 }
 
-function stringifyNullableJson(value: unknown) {
+export function stringifyNullableJson(value: unknown) {
   return value === null || value === undefined ? null : JSON.stringify(value)
 }
 
-function parseJson<T>(value: unknown, fallback: T): T {
+export function parseJson<T>(value: unknown, fallback: T): T {
   if (typeof value !== "string" || value.length === 0) return fallback
   return JSON.parse(value) as T
 }
@@ -599,6 +600,6 @@ function parseNullableSchema<T>(value: unknown, fallback: T | null) {
   return JSON.parse(value) as T
 }
 
-function cloneProjectDetail(project: ProjectDetail) {
+export function cloneProjectDetail(project: ProjectDetail) {
   return structuredClone(project)
 }

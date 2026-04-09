@@ -22,12 +22,12 @@ describe("workspace patch service", () => {
 
   it("removes stale timeline attachments when patched modules disappear", async () => {
     const repository = createLevelystRepository(path.join(dbDir, "timeline.sqlite"))
-    const project = repository.createProject({
+    const project = await repository.createProject({
       name: "Timeline Cleanup",
       runtime_target: "web_2d",
     })
     const blueprint = await planPrompt("Create a 2D platformer with coins and checkpoints")
-    repository.updateProject(project.id, {
+    await repository.updateProject(project.id, {
       blueprint_json: blueprint,
       workspace_json: {
         ...project.workspace_json,
@@ -35,7 +35,7 @@ describe("workspace patch service", () => {
       },
     })
 
-    const generated = generatePrototypeForProject(repository, project.id).project
+    const generated = (await generatePrototypeForProject(repository, project.id)).project
     const workspaceWithAttachment = {
       ...generated.workspace_json,
       timeline_sections: generated.workspace_json.timeline_sections.map((section, index) =>
@@ -45,14 +45,14 @@ describe("workspace patch service", () => {
               module_ids: ["node_systems_coin_collectible"],
             }
           : section,
-      ),
+        ),
     }
 
-    repository.updateProject(project.id, {
+    await repository.updateProject(project.id, {
       workspace_json: workspaceWithAttachment,
     })
 
-    const patched = patchProjectSpec(repository, project.id, [
+    const patched = await patchProjectSpec(repository, project.id, [
       {
         op: "remove_system",
         module: "systems/coin_collectible",
@@ -65,12 +65,12 @@ describe("workspace patch service", () => {
 
   it("moves graph layout nodes without rebuilding the spec", async () => {
     const repository = createLevelystRepository(path.join(dbDir, "layout.sqlite"))
-    const project = repository.createProject({
+    const project = await repository.createProject({
       name: "Layout Patch",
       runtime_target: "web_2d",
     })
     const blueprint = await planPrompt("Create a 2D platformer with coins and checkpoints")
-    repository.updateProject(project.id, {
+    await repository.updateProject(project.id, {
       blueprint_json: blueprint,
       workspace_json: {
         ...project.workspace_json,
@@ -78,10 +78,10 @@ describe("workspace patch service", () => {
       },
     })
 
-    const generated = generatePrototypeForProject(repository, project.id).project
+    const generated = (await generatePrototypeForProject(repository, project.id)).project
     const originalSpec = generated.prototype_spec
 
-    const patched = patchProjectSpec(repository, project.id, [
+    const patched = await patchProjectSpec(repository, project.id, [
       {
         op: "move_graph_node_layout",
         node_id: "player/platformer_controller",

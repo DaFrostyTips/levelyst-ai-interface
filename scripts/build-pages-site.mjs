@@ -35,21 +35,22 @@ const previewCards = [
     type: "video",
     mediaSrc: "./previews/orbital-breach.mp4",
     posterSrc: "./previews/community/orbital-breach-poster.svg",
-    description: "A 3D survival shooter concept built to demonstrate the public read-only demo flow.",
+    description: "A 3D survival shooter concept showcasing hosted AI planning, generation, and browser-scoped saves.",
   },
 ]
 
 const featureList = [
-  "Prompt-to-blueprint planning with rule-based demo-safe fallbacks.",
-  "Interactive node graph workspace for systems, modules, and dependencies.",
-  "Presentation mode and previewable sample projects for quick walkthroughs.",
-  "Public Vercel deployment locked to read-only demo behavior with no SQLite writes.",
+  "Prompt-to-blueprint planning with a fast deterministic rule-based builder in public mode.",
+  "Anonymous per-browser persistence backed by Neon Postgres.",
+  "Interactive node graph editing, prototype generation, and presentation mode.",
+  "Protected kiosk flow with idle reset for grad-show installations.",
 ]
 
 const steps = [
   "Browse the static showcase on GitHub Pages.",
-  "Open the public Vercel deployment for the live demo-safe app.",
-  "Run the project locally in full local mode when you want editing and generation enabled.",
+  "Open the public Vercel deployment to create and edit projects in your browser.",
+  "Use the protected kiosk route on the grad-show machine for the auto-reset exhibit flow.",
+  "Clone the repo only if you want local development or custom deployment changes.",
 ]
 
 function renderPreviewCard(card) {
@@ -84,7 +85,7 @@ function renderHtml() {
     <title>Levelyst AI Interface</title>
     <meta
       name="description"
-      content="Levelyst AI Interface is a prompt-to-prototype game design workspace with a public GitHub Pages showcase and a read-only Vercel demo."
+      content="Levelyst AI Interface is a prompt-to-prototype game design workspace with a GitHub Pages showcase and a full public Vercel app."
     />
     <link rel="icon" href="./icon-light-32x32.png" />
     <style>
@@ -305,15 +306,15 @@ function renderHtml() {
     <main class="shell">
       <section class="hero">
         <div>
-          <span class="badge">Public Showcase + Demo</span>
+          <span class="badge">Public Showcase + App</span>
           <h1>Levelyst AI Interface</h1>
           <p>
             A prompt-to-prototype workspace for building game concepts, reviewing AI blueprints,
             and exploring modular systems in an engine-like editor. This Pages site is the static
-            overview, and the live public app runs separately on Vercel in read-only demo mode.
+            overview, and the live public app runs separately on Vercel with browser-scoped saves.
           </p>
           <div class="hero-actions">
-            <a class="button button-primary" href="${vercelUrl}">Open Live Demo</a>
+            <a class="button button-primary" href="${vercelUrl}">Open Live App</a>
             <a class="button button-secondary" href="${repoUrl}">View GitHub Repo</a>
             <a class="button button-secondary" href="${pagesUrl}">GitHub Pages URL</a>
           </div>
@@ -322,7 +323,7 @@ function renderHtml() {
           <img src="./previews/community/orbital-breach-poster.svg" alt="Levelyst showcase preview" />
           <p class="section-copy">
             Public deployments are intentionally split: GitHub Pages hosts a static project overview,
-            while Vercel hosts the interactive Next.js app with demo-safe restrictions.
+            while Vercel hosts the full interactive Next.js app.
           </p>
         </aside>
       </section>
@@ -331,9 +332,9 @@ function renderHtml() {
         <div>
           <h2>What’s Included</h2>
           <p class="section-copy">
-            The public Vercel build runs with <code>LEVELYST_DEPLOY_MODE=demo</code> and
-            <code>LEVELYST_PLANNER_PROVIDER=rule_based</code>, so visitors can explore sample
-            projects and presentation views without triggering paid AI calls or local SQLite writes.
+            The public Vercel build is designed for <code>LEVELYST_DEPLOY_MODE=public</code> with
+            rule-based planning, anonymous browser sessions, and persistent project data stored
+            outside the local filesystem.
           </p>
         </div>
         <div>

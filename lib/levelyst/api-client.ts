@@ -123,6 +123,15 @@ export async function patchProjectSpec(projectId: string, operations: PatchOpera
   }
 }
 
+export async function resetKioskSession() {
+  const payload = await apiFetch<{ project: ProjectDetail }>("/api/kiosk/reset", {
+    method: "POST",
+  })
+  return {
+    project: projectDetailSchema.parse(payload.project),
+  }
+}
+
 export async function getJob(jobId: string) {
   const payload = await apiFetch<{ job: GenerationJob }>(`/api/jobs/${jobId}`)
   return {
@@ -179,7 +188,14 @@ async function apiFetch<T>(input: string, init?: RequestInit): Promise<T> {
 
   const payload = await response.json().catch(() => null)
   if (!response.ok) {
-    throw new Error(payload?.error ?? `Request failed with status ${response.status}.`)
+    const retryAfter = payload?.retry_after_seconds
+    const message =
+      typeof payload?.error === "string"
+        ? typeof retryAfter === "number"
+          ? `${payload.error} Try again in ${retryAfter} seconds.`
+          : payload.error
+        : `Request failed with status ${response.status}.`
+    throw new Error(message)
   }
 
   return payload as T

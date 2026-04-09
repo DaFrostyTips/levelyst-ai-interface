@@ -1,11 +1,15 @@
 # Levelyst AI Interface
 
-Levelyst AI Interface is a Next.js game prototyping workspace with two public deployment surfaces:
+Levelyst AI Interface is a Next.js game prototyping workspace with two public surfaces:
 
-- GitHub Pages hosts a static showcase site.
-- Vercel hosts the interactive Next.js app in a demo-safe, read-only mode.
+- GitHub Pages serves a static portfolio-style showcase.
+- Vercel serves the full interactive app with anonymous per-browser project persistence.
 
-The app supports a full local mode for development and a public demo mode that avoids paid AI usage and local SQLite writes.
+The app now supports three deployment modes:
+
+- `local`: SQLite-backed development on your machine
+- `public`: Neon-backed hosted app for portfolio visitors with browser-scoped saves
+- `demo`: read-only fallback mode for emergencies
 
 ## Requirements
 
@@ -20,7 +24,7 @@ The app supports a full local mode for development and a public demo mode that a
    npm ci
    ```
 
-2. Create local env vars:
+2. Copy the environment template:
 
    ```bash
    cp .env.example .env.local
@@ -38,71 +42,85 @@ The app supports a full local mode for development and a public demo mode that a
    npm run build
    npm test
    npm run typecheck
+   npm run build:pages
    ```
 
-## Environment Variables
+## Environment Contract
 
-`.env.example` documents the supported variables. The important deployment contract is:
+`.env.example` documents every supported variable. The important production contract is:
 
-- `LEVELYST_DEPLOY_MODE=local` for the full local SQLite-backed experience
-- `LEVELYST_DEPLOY_MODE=demo` for the public read-only deployment
-- `LEVELYST_PLANNER_PROVIDER=rule_based` for public demo deployments
-- `OPENAI_API_KEY` should be set only for local OpenAI-backed planning, not for the public demo
+- `LEVELYST_DEPLOY_MODE=public`
+- `LEVELYST_PLANNER_PROVIDER=rule_based`
+- `LEVELYST_OPENAI_MODEL=gpt-5-mini`
+- `DATABASE_URL` for Neon Postgres
+- `LEVELYST_KIOSK_SECRET` for protected grad-show kiosk access
 
-Recommended public demo settings on Vercel:
+Public mode saves projects anonymously per browser using the `levelyst_session` cookie. Visitors do not need an account, but projects do not sync across devices.
 
-```bash
-LEVELYST_DEPLOY_MODE=demo
-LEVELYST_PLANNER_PROVIDER=rule_based
-```
+Kiosk mode is available at `/kiosk?token=YOUR_SECRET`. A valid token sets a kiosk cookie, unlocks the exhibit shell, raises AI limits, and enables the idle auto-reset flow.
 
-Leave `OPENAI_API_KEY` unset in the public demo.
+Local Ollama remains optional and local-only. When `LEVELYST_LOCAL_AI_MODE=copy_only` is enabled and Ollama is running, local development can use it to improve wording around rule-based planning. If Ollama is offline, the app falls back cleanly to deterministic copy.
 
 ## GitHub Pages
 
-GitHub Pages does not build the full Next.js app. Instead, this repo generates a separate static showcase artifact with:
+GitHub Pages does not deploy the full Next.js app. Instead, this repo builds a lightweight static showcase:
 
 ```bash
 npm run build:pages
 ```
 
-That command writes a deployable `pages-dist/` directory and copies the preview assets used by the showcase. The Pages workflow lives in `.github/workflows/deploy-pages.yml`.
+That command generates `pages-dist/` and copies the preview assets used by the landing page. The workflow lives in [`.github/workflows/deploy-pages.yml`](/Users/adenjoseph/Desktop/Levelyst AI Interface/.github/workflows/deploy-pages.yml).
 
-`out/` is treated as stale generated output and is not used as the Pages deployment source.
+`out/` is treated as stale generated output and is not the Pages deploy source.
 
 ## Vercel
 
-Create a new Vercel project named `levelyst-ai-interface` and link it to this repository. Do not reuse the old `v0-levelyst-ai-interface` project.
+The intended public Vercel configuration is:
 
-For the public deployment:
+```bash
+LEVELYST_DEPLOY_MODE=public
+LEVELYST_PLANNER_PROVIDER=rule_based
+LEVELYST_OPENAI_MODEL=gpt-5-mini
+```
 
-- set `LEVELYST_DEPLOY_MODE=demo`
-- set `LEVELYST_PLANNER_PROVIDER=rule_based`
-- do not set `OPENAI_API_KEY`
+Before deploying or redeploying with those defaults, set these required secrets in Vercel:
 
-The repository also includes a `vercel.json` with those two non-secret demo defaults so the first deployment does not boot into local SQLite mode by accident.
+- `DATABASE_URL`
+- `LEVELYST_KIOSK_SECRET`
 
-In demo mode:
+Optional for later hardening, but not required for launch:
+
+- `UPSTASH_REDIS_REST_URL`
+- `UPSTASH_REDIS_REST_TOKEN`
+
+`OPENAI_API_KEY` is not required for the hosted public rollout in this configuration.
+
+In `public` mode:
+
+- visitors can create, edit, save, and generate projects directly from the hosted URL
+- projects are scoped to one browser session
+- prompt planning uses the deterministic rule-based planner
+- prompt requests are only rate-limited if Upstash is configured
+- `/present/[projectId]` remains session-scoped
+
+In `demo` mode:
 
 - read routes stay available
 - write and generation routes return `403`
-- the UI shows a read-only demo banner and disables mutating actions
+- the UI shows a read-only banner
 
 ## GitHub Publishing
 
-Target repo:
+Target repository:
 
 - Owner: `DaFrostyTips`
 - Name: `levelyst-ai-interface`
-- Visibility: public
+- Visibility: `public`
 
-Recommended publish sequence:
+Recommended flow:
 
-1. Create an empty public GitHub repository named `levelyst-ai-interface` under `DaFrostyTips`.
-2. Initialize git locally if needed and set the default branch to `main`.
-3. Add the GitHub remote.
-4. Commit the publish-ready project.
-5. Push `main`.
-6. Connect the GitHub repo to the new Vercel project.
-
-If repository creation is not available through the current toolchain, step 1 may need to be done manually in GitHub before pushing.
+1. Push `main` to GitHub.
+2. Install the Vercel GitHub App for the repo.
+3. Add the required Vercel environment variables.
+4. Trigger a production deploy.
+5. Use the Vercel URL as the live portfolio app and GitHub Pages as the static showcase.

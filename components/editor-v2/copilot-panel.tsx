@@ -95,7 +95,7 @@ export function CopilotPanel({
                     : "border-cyan-300/35 bg-cyan-400/10 text-cyan-100"
                 }
               >
-                {planningProfile === "presentation" ? "Demo Bias" : "Default"}
+                {planningProfile === "presentation" ? "Presentation Bias" : "Default"}
               </Badge>
             </div>
           </section>
@@ -120,7 +120,7 @@ export function CopilotPanel({
                 )}
               >
                 <div className="flex items-center justify-between gap-3">
-                  <p className="text-[11px] uppercase tracking-[0.16em] text-cyan-100/80">Local AI Copy</p>
+                  <p className="text-[11px] uppercase tracking-[0.16em] text-cyan-100/80">AI Runtime</p>
                   <Badge
                     variant="outline"
                     className={cn(
@@ -203,7 +203,7 @@ export function CopilotPanel({
                 : "lv-chrome-control text-white"
             }
           >
-            {planningProfile === "presentation" ? "Demo Bias On" : "Enable Demo Bias"}
+            {planningProfile === "presentation" ? "Presentation Bias On" : "Enable Presentation Bias"}
           </Button>
           {onOpenPresentationScreen ? (
             <Button

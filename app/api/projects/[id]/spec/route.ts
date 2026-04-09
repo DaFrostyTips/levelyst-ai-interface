@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server"
 import { z } from "zod"
 import { patchOperationSchema } from "@levelyst/contracts"
-import { createDemoModeReadonlyResponse, isLevelystDemoMode } from "@/lib/server/levelyst/deploy-mode"
+import { createDemoModeReadonlyResponse } from "@/lib/server/levelyst/deploy-mode"
 import { getLevelystRepository } from "@/lib/server/levelyst/project-repository"
+import { getLevelystRequestContextForRoute } from "@/lib/server/levelyst/request-context"
 import { patchProjectSpec } from "@/lib/server/levelyst/workspace-patch-service"
 
 export const runtime = "nodejs"
@@ -14,10 +15,11 @@ const patchSpecRequestSchema = z
   })
   .strict()
 
-export async function GET(_request: Request, context: { params: Promise<{ id: string }> }) {
-  const repository = getLevelystRepository()
+export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
+  const requestContext = await getLevelystRequestContextForRoute(request)
+  const repository = await getLevelystRepository(requestContext)
   const params = await context.params
-  const project = repository.getProjectDetail(params.id)
+  const project = await repository.getProjectDetail(params.id)
 
   if (!project) {
     return NextResponse.json({ error: "Project not found." }, { status: 404 })
@@ -29,16 +31,17 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
 }
 
 export async function PATCH(request: Request, context: { params: Promise<{ id: string }> }) {
-  if (isLevelystDemoMode()) {
+  const requestContext = await getLevelystRequestContextForRoute(request)
+  if (requestContext.deployMode === "demo") {
     return createDemoModeReadonlyResponse()
   }
 
-  const repository = getLevelystRepository()
+  const repository = await getLevelystRepository(requestContext)
   const params = await context.params
   const body = patchSpecRequestSchema.parse(await request.json())
 
   try {
-    const project = patchProjectSpec(repository, params.id, body.operations)
+    const project = await patchProjectSpec(repository, params.id, body.operations)
     return NextResponse.json({ project })
   } catch (error) {
     return NextResponse.json(

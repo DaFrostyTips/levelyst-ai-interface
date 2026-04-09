@@ -1,12 +1,14 @@
 import { getLevelystRepository } from "@/lib/server/levelyst/project-repository"
+import { getLevelystRequestContextForRoute } from "@/lib/server/levelyst/request-context"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
 
-export async function GET(_request: Request, context: { params: Promise<{ id: string }> }) {
-  const repository = getLevelystRepository()
+export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
+  const requestContext = await getLevelystRequestContextForRoute(request)
+  const repository = await getLevelystRepository(requestContext)
   const params = await context.params
-  const job = repository.getJob(params.id)
+  const job = await repository.getJob(params.id)
 
   if (!job) {
     return new Response(JSON.stringify({ error: "Job not found." }), {
@@ -17,7 +19,7 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
     })
   }
 
-  const events = repository.listJobEvents(job.id)
+  const events = await repository.listJobEvents(job.id)
   const encoder = new TextEncoder()
 
   const stream = new ReadableStream({

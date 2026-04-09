@@ -34,7 +34,7 @@ import { cn } from "@/lib/utils"
 interface TopControlBarProps {
   projectName: string
   mode: EditorMode
-  credits: number
+  statusBadgeLabel?: string | null
   motionIntensity: MotionIntensity
   readiness: SimulationReadiness
   layoutMode: WorkspaceLayoutMode
@@ -55,7 +55,7 @@ const readinessLabelMap: Record<SimulationReadiness["status"], string> = {
 export function TopControlBar({
   projectName,
   mode,
-  credits,
+  statusBadgeLabel,
   motionIntensity,
   readiness,
   layoutMode,
@@ -284,9 +284,11 @@ export function TopControlBar({
             </DropdownMenu>
           )}
 
-          <Badge className="lv-glass-hud border border-cyan-400/30 bg-cyan-400/10 px-2 py-1 text-cyan-100">
-            Credits: {credits}
-          </Badge>
+          {statusBadgeLabel ? (
+            <Badge className="lv-glass-hud border border-cyan-400/30 bg-cyan-400/10 px-2 py-1 text-cyan-100">
+              {statusBadgeLabel}
+            </Badge>
+          ) : null}
         </div>
       </div>
     </header>

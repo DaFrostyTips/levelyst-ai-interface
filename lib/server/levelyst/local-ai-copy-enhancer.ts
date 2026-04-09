@@ -7,8 +7,8 @@ import {
   LOCAL_AI_WARMUP_COMMAND,
   type LocalAiMode,
 } from "@/lib/levelyst/local-ai-status"
-import { LEVELYST_DEMO_READONLY_HINT } from "@/lib/levelyst/deploy-mode"
-import { isLevelystDemoMode } from "./deploy-mode"
+import { LEVELYST_DEMO_READONLY_HINT, LEVELYST_PUBLIC_SESSION_MESSAGE } from "@/lib/levelyst/deploy-mode"
+import { isLevelystDemoMode, isLevelystPublicMode } from "./deploy-mode"
 import { getPlannerRuntimeConfig } from "./openai-client"
 
 const DEFAULT_OLLAMA_HOST = "http://127.0.0.1:11434"
@@ -93,6 +93,18 @@ export async function getLocalAiCopilotStatus(): Promise<CopilotLocalAiStatus> {
       actionHint: LEVELYST_DEMO_READONLY_HINT,
       warmupCommand: LOCAL_AI_WARMUP_COMMAND,
       model: getLocalAiRuntimeConfig().model,
+    }
+  }
+
+  if (isLevelystPublicMode()) {
+    const runtimeConfig = getPlannerRuntimeConfig()
+    return {
+      state: "active",
+      badgeLabel: "AI Copilot Ready",
+      detail: "Prompt planning is active for this public workspace and stays responsive for browser-based project creation.",
+      actionHint: LEVELYST_PUBLIC_SESSION_MESSAGE,
+      warmupCommand: LOCAL_AI_WARMUP_COMMAND,
+      model: runtimeConfig.model,
     }
   }
 

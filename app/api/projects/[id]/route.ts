@@ -1,14 +1,16 @@
 import { NextResponse } from "next/server"
-import { createDemoModeReadonlyResponse, isLevelystDemoMode } from "@/lib/server/levelyst/deploy-mode"
+import { createDemoModeReadonlyResponse } from "@/lib/server/levelyst/deploy-mode"
 import { getLevelystRepository } from "@/lib/server/levelyst/project-repository"
+import { getLevelystRequestContextForRoute } from "@/lib/server/levelyst/request-context"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
 
-export async function GET(_request: Request, context: { params: Promise<{ id: string }> }) {
-  const repository = getLevelystRepository()
+export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
+  const requestContext = await getLevelystRequestContextForRoute(request)
+  const repository = await getLevelystRepository(requestContext)
   const params = await context.params
-  const project = repository.getProjectDetail(params.id)
+  const project = await repository.getProjectDetail(params.id)
 
   if (!project) {
     return NextResponse.json({ error: "Project not found." }, { status: 404 })
@@ -17,16 +19,17 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
   return NextResponse.json({ project })
 }
 
-export async function DELETE(_request: Request, context: { params: Promise<{ id: string }> }) {
-  if (isLevelystDemoMode()) {
+export async function DELETE(request: Request, context: { params: Promise<{ id: string }> }) {
+  const requestContext = await getLevelystRequestContextForRoute(request)
+  if (requestContext.deployMode === "demo") {
     return createDemoModeReadonlyResponse()
   }
 
-  const repository = getLevelystRepository()
+  const repository = await getLevelystRepository(requestContext)
   const params = await context.params
 
   try {
-    const project = repository.deleteProject(params.id)
+    const project = await repository.deleteProject(params.id)
     return NextResponse.json({ project })
   } catch (error) {
     return NextResponse.json(

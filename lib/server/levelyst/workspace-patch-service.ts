@@ -16,7 +16,15 @@ export function persistWorkspaceSnapshot(
   projectId: string,
   workspaceJson: ProjectDetail["workspace_json"],
 ) {
-  const project = repository.getProjectDetail(projectId)
+  return persistWorkspaceSnapshotAsync(repository, projectId, workspaceJson)
+}
+
+async function persistWorkspaceSnapshotAsync(
+  repository: LevelystRepository,
+  projectId: string,
+  workspaceJson: ProjectDetail["workspace_json"],
+) {
+  const project = await repository.getProjectDetail(projectId)
   if (!project) {
     throw new Error(`Project "${projectId}" was not found.`)
   }
@@ -31,7 +39,11 @@ export function persistWorkspaceSnapshot(
 }
 
 export function patchProjectSpec(repository: LevelystRepository, projectId: string, operations: PatchOperation[]) {
-  const project = repository.getProjectDetail(projectId)
+  return patchProjectSpecAsync(repository, projectId, operations)
+}
+
+async function patchProjectSpecAsync(repository: LevelystRepository, projectId: string, operations: PatchOperation[]) {
+  const project = await repository.getProjectDetail(projectId)
   if (!project) {
     throw new Error(`Project "${projectId}" was not found.`)
   }

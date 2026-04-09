@@ -22,8 +22,11 @@ export interface GenerationResult {
   job: GenerationJob
 }
 
-export function generatePrototypeForProject(repository: LevelystRepository, projectId: string): GenerationResult {
-  const project = repository.getProjectDetail(projectId)
+export async function generatePrototypeForProject(
+  repository: LevelystRepository,
+  projectId: string,
+): Promise<GenerationResult> {
+  const project = await repository.getProjectDetail(projectId)
   if (!project) {
     throw new Error(`Project "${projectId}" was not found.`)
   }
@@ -35,11 +38,11 @@ export function generatePrototypeForProject(repository: LevelystRepository, proj
     throw new Error("Project must have a blueprint before generation can begin.")
   }
 
-  const initialJob = repository.createJob(project.id)
-  let job = repository.updateJob(initialJob.id, { status: "running" })
+  const initialJob = await repository.createJob(project.id)
+  let job = await repository.updateJob(initialJob.id, { status: "running" })
 
   try {
-    const generated = attemptPromptModeGeneration(repository, project, blueprintPlan, pendingPromptMode)
+    const generated = await attemptPromptModeGeneration(repository, project, blueprintPlan, pendingPromptMode)
     const events = buildGenerationEvents(
       job.id,
       project.id,
@@ -48,9 +51,9 @@ export function generatePrototypeForProject(repository: LevelystRepository, proj
       generated.orderedModuleIds,
       generated.project.prototype_spec!,
     )
-    repository.replaceJobEvents(job.id, events)
-    job = repository.updateJob(job.id, { status: "completed", error_message: null })
-    const updatedProject = repository.updateProject(project.id, {
+    await repository.replaceJobEvents(job.id, events)
+    job = await repository.updateJob(job.id, { status: "completed", error_message: null })
+    const updatedProject = await repository.updateProject(project.id, {
       latest_job: job,
     })
 
@@ -80,17 +83,17 @@ export function generatePrototypeForProject(repository: LevelystRepository, proj
         delay_ms: 80,
       }),
     ]
-    repository.replaceJobEvents(job.id, failedEvents)
-    job = repository.updateJob(job.id, {
+    await repository.replaceJobEvents(job.id, failedEvents)
+    job = await repository.updateJob(job.id, {
       status: "failed",
       error_message: message,
     })
-    repository.updateProject(project.id, { latest_job: job })
+    await repository.updateProject(project.id, { latest_job: job })
     throw new Error(message)
   }
 }
 
-function attemptPromptModeGeneration(
+async function attemptPromptModeGeneration(
   repository: LevelystRepository,
   project: ProjectDetail,
   blueprintPlan: BlueprintPlan,
@@ -108,8 +111,8 @@ function attemptPromptModeGeneration(
 
     if (patchOperations.length > 0) {
       try {
-        const patchedProject = patchProjectSpec(repository, project.id, patchOperations)
-        const finalizedProject = repository.updateProject(project.id, {
+        const patchedProject = await patchProjectSpec(repository, project.id, patchOperations)
+        const finalizedProject = await repository.updateProject(project.id, {
           workspace_json: editorWorkspaceSnapshotSchema.parse({
             ...patchedProject.workspace_json,
             prompt: project.workspace_json.prompt,
@@ -133,7 +136,7 @@ function attemptPromptModeGeneration(
   const builtGraph = buildModuleGraph(blueprintPlan, project.module_graph)
   const prototypeSpec = PrototypeSpecCompiler.compile(blueprintPlan, builtGraph.resolved_modules)
   const nextWorkspace = buildWorkspaceSnapshot(project, blueprintPlan, builtGraph.module_graph)
-  const updatedProject = repository.updateProject(project.id, {
+  const updatedProject = await repository.updateProject(project.id, {
     runtime_target: blueprintPlan.constraints.target_runtime,
     genre: blueprintPlan.game_type === "3d_fps" ? "fps_wave_survival" : "platformer",
     blueprint_json: blueprintPlan,

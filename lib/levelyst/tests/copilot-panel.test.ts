@@ -25,7 +25,7 @@ vi.mock("@/components/ui/textarea", () => ({
 import { CopilotPanel } from "@/components/editor-v2/copilot-panel"
 
 describe("copilot panel", () => {
-  it("renders the local AI status copy without introducing a blocking state", () => {
+  it("renders the AI runtime status copy without introducing a blocking state", () => {
     const markup = renderToStaticMarkup(
       createElement(CopilotPanel, {
         prompt: "",
@@ -50,7 +50,7 @@ describe("copilot panel", () => {
     )
 
     expect(markup).toContain("Fallback Mode")
-    expect(markup).toContain("Local AI Copy")
+    expect(markup).toContain("AI Runtime")
     expect(markup).toContain("npm run warmup:local-ai")
     expect(markup).not.toContain("Analyzing Prompt")
   })

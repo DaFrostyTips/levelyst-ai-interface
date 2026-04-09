@@ -120,6 +120,7 @@ import {
   getProject,
   getProjectSpec,
   patchProjectSpec,
+  resetKioskSession,
   streamGenerationEvents,
   submitPrompt,
   updateBlueprint,
@@ -147,6 +148,8 @@ import {
 import {
   LEVELYST_DEMO_READONLY_HINT,
   LEVELYST_DEMO_READONLY_MESSAGE,
+  LEVELYST_PUBLIC_KIOSK_MESSAGE,
+  LEVELYST_PUBLIC_SESSION_MESSAGE,
   type LevelystDeployMode,
 } from "@/lib/levelyst/deploy-mode"
 import { cn } from "@/lib/utils"
@@ -170,17 +173,11 @@ interface HudRect {
   height: number
 }
 
-interface UserProfile {
-  name: string
-  avatar: string
-  credits: number
-  maxCredits: number
-}
-
 interface LevelystWorkbenchProps {
   initialProjects: ProjectDetail[]
   initialLocalAiStatus: CopilotLocalAiStatus
   deployMode: LevelystDeployMode
+  experienceMode: "standard" | "kiosk"
 }
 
 const FLOATING_PANEL_STORAGE_KEY = "levelyst.editor.panels.v3"
@@ -300,8 +297,15 @@ const fpsFollowUpChips = [
   "Retint the arena neon",
 ]
 
-export function LevelystWorkbench({ initialProjects, initialLocalAiStatus, deployMode }: LevelystWorkbenchProps) {
+export function LevelystWorkbench({
+  initialProjects,
+  initialLocalAiStatus,
+  deployMode,
+  experienceMode,
+}: LevelystWorkbenchProps) {
   const isReadOnlyDemo = deployMode === "demo"
+  const isPublicMode = deployMode === "public"
+  const isKioskExperience = experienceMode === "kiosk"
   const [layoutMode, setLayoutMode] = useState<WorkspaceLayoutMode>("wide")
   const [prefersReducedMotion, setPrefersReducedMotion] = useState(false)
   const [view, setView] = useState<EditorView>("dashboard")
@@ -309,18 +313,18 @@ export function LevelystWorkbench({ initialProjects, initialLocalAiStatus, deplo
   const [simulatePhase, setSimulatePhase] = useState<"idle" | "zooming" | "handoff" | "settle">("idle")
   const [mobileWorkspace, setMobileWorkspace] = useState<MobileWorkspace>("canvas")
   const [leftRailTab, setLeftRailTab] = useState<LeftRailTab>("prompt")
-  const [planningProfile, setPlanningProfile] = useState<"default" | "presentation">("default")
+  const [planningProfile, setPlanningProfile] = useState<"default" | "presentation">(
+    isKioskExperience ? "presentation" : "default",
+  )
 
   const [projects, setProjects] = useState<ProjectRecord[]>(() =>
-    initialProjects.length > 0 ? initialProjects.map((project) => hydrateProjectRecord(project)) : createInitialProjects(),
+    initialProjects.length > 0
+      ? initialProjects.map((project) => hydrateProjectRecord(project))
+      : deployMode === "local"
+        ? createInitialProjects()
+        : [],
   )
   const [activeProjectId, setActiveProjectId] = useState<string | null>(initialProjects[0]?.id ?? null)
-  const [userProfile, setUserProfile] = useState<UserProfile>({
-    name: "Alex Chen",
-    avatar: "AC",
-    credits: 87,
-    maxCredits: 500,
-  })
 
   const [nodes, setNodes] = useState<ModuleNode[]>([])
   const [graphEdges, setGraphEdges] = useState<DependencyEdge[]>([])
@@ -397,6 +401,9 @@ export function LevelystWorkbench({ initialProjects, initialLocalAiStatus, deplo
   const [activePanelDrag, setActivePanelDrag] = useState<PanelKey | null>(null)
   const [snapPreview, setSnapPreview] = useState<PanelSnapPreview | null>(null)
   const readOnlyDemoMessage = `${LEVELYST_DEMO_READONLY_MESSAGE} ${LEVELYST_DEMO_READONLY_HINT}`
+  const publicModeMessage = isKioskExperience ? LEVELYST_PUBLIC_KIOSK_MESSAGE : LEVELYST_PUBLIC_SESSION_MESSAGE
+  const experienceStatusBadgeLabel = isKioskExperience ? "Kiosk Mode" : isPublicMode ? "Saved in Browser" : "Local Mode"
+  const experienceMessageTitle = isKioskExperience ? "Grad Show Kiosk" : isPublicMode ? "Public Browser Save" : "Local Workspace"
   const showReadOnlyDemoNotice = useCallback(() => {
     setSimulationError(LEVELYST_DEMO_READONLY_MESSAGE)
   }, [])
@@ -713,6 +720,104 @@ export function LevelystWorkbench({ initialProjects, initialLocalAiStatus, deplo
   }, [activeProjectId, buildWorkspaceSnapshot, isReadOnlyDemo])
 
   useEffect(() => {
+    if (!isKioskExperience) return
+
+    let idleTimer: number | null = null
+    let resetting = false
+
+    const createResetViewport = () => {
+      const bounds = editorSurfaceRef.current?.getBoundingClientRect()
+      if (!bounds) {
+        return {
+          x: LEGACY_VIEWPORT_X,
+          y: LEGACY_VIEWPORT_Y,
+          scale: 1,
+          isPanning: false,
+        }
+      }
+
+      return createCenteredCanvasViewport(bounds.width, bounds.height, 1)
+    }
+
+    const scheduleReset = () => {
+      if (idleTimer !== null) {
+        window.clearTimeout(idleTimer)
+      }
+
+      idleTimer = window.setTimeout(() => {
+        if (resetting) return
+        resetting = true
+
+        void resetKioskSession()
+          .then(({ project }) => {
+            const record = hydrateProjectRecord(project)
+            if (project.prototype_spec) {
+              compiledWorkspaceSignaturesRef.current[record.id] = createCompileSignature(record.workspace)
+            } else {
+              delete compiledWorkspaceSignaturesRef.current[record.id]
+            }
+
+            activeProjectLoadedRef.current = null
+            lastPersistedWorkspaceRef.current = JSON.stringify(dehydrateWorkspace(record.workspace))
+            setProjects([record])
+            setActiveProjectId(record.id)
+            setView("editor")
+            setEditorMode("build")
+            setSimulatePhase("idle")
+            setPendingProjectMode(null)
+            setSimulationError(null)
+            setSelectedNodeId(null)
+            setSelectedNodeIds([])
+            setHoveredNodeId(null)
+            setProjectDeleteTarget(null)
+            setWorkspacePendingBlueprint(null)
+            setWorkspacePendingPromptMode(null)
+            setWorkspaceBlueprintState("idle")
+            setHubPendingBlueprint(null)
+            setHubBlueprintState("idle")
+            setBlueprintEntryPoint(null)
+            setHubPrompt("")
+            setPrompt("")
+            setPlanningSteps([])
+            setPlanningProfile("presentation")
+            setLeftRailTab("prompt")
+            setMobileWorkspace("canvas")
+            setTimelineTab("timeline")
+            setTimelineDockCollapsed(false)
+            setCanvasViewport(createResetViewport())
+          })
+          .catch((error) => {
+            setSimulationError(error instanceof Error ? error.message : "Kiosk reset failed.")
+          })
+          .finally(() => {
+            resetting = false
+            scheduleReset()
+          })
+      }, 3 * 60 * 1000)
+    }
+
+    const handleActivity = () => scheduleReset()
+
+    scheduleReset()
+    window.addEventListener("pointerdown", handleActivity)
+    window.addEventListener("pointermove", handleActivity)
+    window.addEventListener("keydown", handleActivity)
+    window.addEventListener("touchstart", handleActivity)
+    window.addEventListener("wheel", handleActivity)
+
+    return () => {
+      if (idleTimer !== null) {
+        window.clearTimeout(idleTimer)
+      }
+      window.removeEventListener("pointerdown", handleActivity)
+      window.removeEventListener("pointermove", handleActivity)
+      window.removeEventListener("keydown", handleActivity)
+      window.removeEventListener("touchstart", handleActivity)
+      window.removeEventListener("wheel", handleActivity)
+    }
+  }, [isKioskExperience])
+
+  useEffect(() => {
     if (!activeProjectId) return
     if (activeProjectLoadedRef.current !== activeProjectId) return
     if (isReplayingGenerationRef.current) return
@@ -970,7 +1075,7 @@ export function LevelystWorkbench({ initialProjects, initialLocalAiStatus, deplo
 
   const runGraphBuildFromBlueprint = useCallback(
     async (blueprint: IntentBlueprint, options: { clearWorkspace: boolean }) => {
-      if (userProfile.credits <= 0 || !activeProjectId) return false
+      if (!activeProjectId) return false
 
       const blueprintPlan = dehydrateIntentBlueprint(blueprint)
       if (blueprintPlan.required_modules.length === 0) return false
@@ -1049,7 +1154,6 @@ export function LevelystWorkbench({ initialProjects, initialLocalAiStatus, deplo
                 reloadWorkspace: true,
                 resetEdges: true,
               })
-              setUserProfile((prev) => ({ ...prev, credits: Math.max(0, prev.credits - 1) }))
               setPrompt("")
               shouldCenterGeneratedReplayRef.current = false
               generationReplayOffsetRef.current = null
@@ -1122,7 +1226,7 @@ export function LevelystWorkbench({ initialProjects, initialLocalAiStatus, deplo
         return false
       }
     },
-    [activeProjectId, buildWorkspaceSnapshot, getCenteredViewport, restoreWorkspaceSnapshot, upsertProjectDetail, userProfile.credits],
+    [activeProjectId, buildWorkspaceSnapshot, getCenteredViewport, restoreWorkspaceSnapshot, upsertProjectDetail],
   )
 
   const prepareBlueprint = useCallback(
@@ -1323,7 +1427,6 @@ export function LevelystWorkbench({ initialProjects, initialLocalAiStatus, deplo
     const activeBlueprint = blueprintEntryPoint === "hub" ? hubPendingBlueprint : workspacePendingBlueprint
     const activePromptMode = workspacePendingPromptMode ?? activeProject?.workspace.pendingPromptMode ?? "replace"
     if (!activeBlueprint) return
-    if (userProfile.credits <= 0) return
     if (dehydrateIntentBlueprint(activeBlueprint).required_modules.length === 0) return
 
     if (blueprintEntryPoint === "hub") {
@@ -1359,7 +1462,6 @@ export function LevelystWorkbench({ initialProjects, initialLocalAiStatus, deplo
     isReadOnlyDemo,
     runGraphBuildFromBlueprint,
     showReadOnlyDemoNotice,
-    userProfile.credits,
     workspacePendingPromptMode,
     workspacePendingBlueprint,
   ])
@@ -1457,10 +1559,6 @@ export function LevelystWorkbench({ initialProjects, initialLocalAiStatus, deplo
         return
       }
 
-      if (userProfile.credits <= 0) {
-        return
-      }
-
       if (!activeProject) {
         setSimulationError("Select a project before starting simulation.")
         return
@@ -1538,7 +1636,7 @@ export function LevelystWorkbench({ initialProjects, initialLocalAiStatus, deplo
         setSimulationError(error instanceof Error ? error.message : "Simulation failed to prepare.")
       }
     },
-    [activeProject, cacheProjectArtifacts, startSimulationTransition, upsertProjectDetail, userProfile.credits],
+    [activeProject, cacheProjectArtifacts, startSimulationTransition, upsertProjectDetail],
   )
 
   useEffect(() => {
@@ -1938,7 +2036,6 @@ export function LevelystWorkbench({ initialProjects, initialLocalAiStatus, deplo
     view === "editor" && activeBlueprintState === "idle" && uiPreferences.coachmarksSeenVersion < ONBOARDING_VERSION
 
   const uiBlockerState: UiBlockerState = useMemo(() => {
-    if (userProfile.credits <= 0) return "credits_exhausted"
     if (simulationError) return "simulation_error"
     if (activeBlueprint && addableCoreSystems.length === 0 && addableGameplaySystems.length === 0) return "no_compatible_modules"
     if (!hasPersistedPrototypeSpec && readiness.status === "missing_dependencies" && editorMode === "simulate") {
@@ -1953,11 +2050,9 @@ export function LevelystWorkbench({ initialProjects, initialLocalAiStatus, deplo
     hasPersistedPrototypeSpec,
     readiness.status,
     simulationError,
-    userProfile.credits,
   ])
 
   const uiBlockerMessage = useMemo(() => {
-    if (uiBlockerState === "credits_exhausted") return "Credits exhausted. Generation is paused until more credits are available."
     if (uiBlockerState === "simulation_error") return simulationError ?? "Simulation could not start."
     if (uiBlockerState === "missing_dependencies") return "Simulation blocked by missing required links in your graph."
     if (uiBlockerState === "no_compatible_modules") return "No compatible systems remain for this blueprint revision."
@@ -2005,11 +2100,10 @@ export function LevelystWorkbench({ initialProjects, initialLocalAiStatus, deplo
     mode: editorMode,
     selectedNodeCount: selectedRealNodeCount,
     readiness: readiness.status,
-    credits: userProfile.credits,
   }
 
   const commandActions = useMemo<CommandAction[]>(() => {
-    const readOnlyReason = isReadOnlyDemo ? "Read-only in public demo mode." : undefined
+    const readOnlyReason = isReadOnlyDemo ? "Read-only in fallback demo mode." : undefined
 
     return [
       { id: "mode-build", label: "Switch to Build Mode", group: "Mode", shortcut: "B" },
@@ -2039,9 +2133,7 @@ export function LevelystWorkbench({ initialProjects, initialLocalAiStatus, deplo
         label: "Run Simulation",
         group: "Graph",
         disabledReason:
-          commandContext.credits <= 0
-            ? "Credits exhausted."
-            : !hasPersistedPrototypeSpec && commandContext.readiness === "missing_dependencies"
+          !hasPersistedPrototypeSpec && commandContext.readiness === "missing_dependencies"
               ? "Simulate blocked: missing required links."
               : undefined,
       },
@@ -2055,9 +2147,9 @@ export function LevelystWorkbench({ initialProjects, initialLocalAiStatus, deplo
         label: `Open ${project.name}`,
         group: "Projects" as const,
         meta: project.id,
-      })),
+        })),
     ]
-  }, [commandContext.credits, commandContext.readiness, commandContext.selectedNodeCount, hasPersistedPrototypeSpec, isReadOnlyDemo, projects])
+  }, [commandContext.readiness, commandContext.selectedNodeCount, hasPersistedPrototypeSpec, isReadOnlyDemo, projects])
 
   const runCommandAction = useCallback(
     (action: CommandAction) => {
@@ -2170,7 +2262,7 @@ export function LevelystWorkbench({ initialProjects, initialLocalAiStatus, deplo
                 <p className="text-sm text-cyan-100/70">AI Game Engine + Creative Studio</p>
               </div>
               <div className="flex items-center gap-3">
-                <Badge className="border border-cyan-300/35 bg-cyan-300/10 text-cyan-100">Credits: {userProfile.credits}</Badge>
+                <Badge className="border border-cyan-300/35 bg-cyan-300/10 text-cyan-100">{experienceStatusBadgeLabel}</Badge>
                 <Button
                   variant="outline"
                   size="icon"
@@ -2203,6 +2295,11 @@ export function LevelystWorkbench({ initialProjects, initialLocalAiStatus, deplo
               <section className="rounded-2xl border border-amber-300/35 bg-amber-400/10 px-4 py-3 text-sm text-amber-50/90">
                 <p className="font-semibold text-white">Public Demo Mode</p>
                 <p className="mt-1">{readOnlyDemoMessage}</p>
+              </section>
+            ) : isPublicMode ? (
+              <section className="rounded-2xl border border-cyan-300/35 bg-cyan-400/10 px-4 py-3 text-sm text-cyan-50/90">
+                <p className="font-semibold text-white">{experienceMessageTitle}</p>
+                <p className="mt-1">{publicModeMessage}</p>
               </section>
             ) : null}
 
@@ -2445,7 +2542,7 @@ export function LevelystWorkbench({ initialProjects, initialLocalAiStatus, deplo
         <TopControlBar
           projectName={activeProject?.name ?? "Untitled Project"}
           mode={editorMode}
-          credits={userProfile.credits}
+          statusBadgeLabel={experienceStatusBadgeLabel}
           motionIntensity={effectiveMotionIntensity}
           readiness={readiness}
           layoutMode={layoutMode}
@@ -2478,6 +2575,13 @@ export function LevelystWorkbench({ initialProjects, initialLocalAiStatus, deplo
             <section className="rounded-2xl border border-amber-300/35 bg-amber-400/10 px-4 py-3 text-sm text-amber-50/90">
               <p className="font-semibold text-white">Public Demo Mode</p>
               <p className="mt-1">{readOnlyDemoMessage}</p>
+            </section>
+          </div>
+        ) : isPublicMode ? (
+          <div className="px-2 pb-2 md:px-3">
+            <section className="rounded-2xl border border-cyan-300/35 bg-cyan-400/10 px-4 py-3 text-sm text-cyan-50/90">
+              <p className="font-semibold text-white">{experienceMessageTitle}</p>
+              <p className="mt-1">{publicModeMessage}</p>
             </section>
           </div>
         ) : null}

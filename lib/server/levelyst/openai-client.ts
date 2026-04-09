@@ -1,5 +1,5 @@
 import OpenAI from "openai"
-import { isLevelystDemoMode } from "./deploy-mode"
+import { isLevelystDemoMode, isLevelystPublicMode } from "./deploy-mode"
 
 export type PlannerProviderKind = "openai" | "rule_based"
 
@@ -19,6 +19,18 @@ export function getPlannerRuntimeConfig(): PlannerRuntimeConfig {
       provider: "rule_based",
       model: process.env.LEVELYST_OPENAI_MODEL?.trim() || DEFAULT_MODEL,
       maxRetries: DEFAULT_MAX_RETRIES,
+    }
+  }
+
+  if (isLevelystPublicMode()) {
+    const model = process.env.LEVELYST_OPENAI_MODEL?.trim() || DEFAULT_MODEL
+    const parsedRetries = Number.parseInt(process.env.LEVELYST_PLANNER_MAX_RETRIES ?? "", 10)
+    const maxRetries = Number.isFinite(parsedRetries) && parsedRetries > 0 ? parsedRetries : DEFAULT_MAX_RETRIES
+
+    return {
+      provider: "rule_based",
+      model,
+      maxRetries,
     }
   }
 
