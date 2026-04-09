@@ -1,0 +1,35 @@
+{
+  "compilerOptions": {
+    "baseUrl": ".",
+    "lib": ["dom", "dom.iterable", "esnext"],
+    "allowJs": true,
+    "target": "ES6",
+    "skipLibCheck": true,
+    "strict": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "jsx": "preserve",
+    "incremental": true,
+    "plugins": [
+      {
+        "name": "next"
+      }
+    ],
+    "paths": {
+      "@/*": ["./*"],
+      "@levelyst/contracts": ["./packages/contracts/src/index.ts"],
+      "@levelyst/dependency-resolver": ["./packages/dependency-resolver/src/index.ts"],
+      "@levelyst/module-registry": ["./packages/module-registry/src/index.ts"],
+      "@levelyst/runtime-input": ["./packages/runtime-input/src/index.ts"],
+      "@levelyst/runtime-web-2d": ["./packages/runtime-web-2d/src/index.ts"],
+      "@levelyst/runtime-web-3d": ["./packages/runtime-web-3d/src/index.ts"],
+      "@levelyst/spec-compiler": ["./packages/spec-compiler/src/index.ts"]
+    }
+  },
+  "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
+  "exclude": ["node_modules"]
+}

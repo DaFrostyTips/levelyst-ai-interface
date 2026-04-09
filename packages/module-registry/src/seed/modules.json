@@ -1,0 +1,247 @@
+[
+  {
+    "id": "player/platformer_controller",
+    "category": "player_mechanics",
+    "engine_target": "web_2d",
+    "inputs": ["keyboard"],
+    "outputs": ["transform", "velocity", "jump_state"],
+    "dependencies": ["physics/gravity"],
+    "compatible_with": ["camera/side_scroll", "systems/checkpoint", "systems/coin_collectible", "enemy/basic_enemy"],
+    "config_schema": {
+      "move_speed": {
+        "type": "number",
+        "default": 6.5,
+        "min": 1,
+        "max": 20
+      },
+      "jump_force": {
+        "type": "number",
+        "default": 12,
+        "min": 1,
+        "max": 30
+      }
+    },
+    "version": "1.0.0",
+    "test_status": "passed"
+  },
+  {
+    "id": "physics/gravity",
+    "category": "physics",
+    "engine_target": "web_2d",
+    "inputs": ["transform"],
+    "outputs": ["velocity", "grounded_state"],
+    "dependencies": [],
+    "compatible_with": ["player/platformer_controller", "enemy/basic_enemy"],
+    "config_schema": {
+      "gravity_scale": {
+        "type": "number",
+        "default": 1,
+        "min": 0.1,
+        "max": 5
+      }
+    },
+    "version": "1.0.0",
+    "test_status": "passed"
+  },
+  {
+    "id": "camera/side_scroll",
+    "category": "camera",
+    "engine_target": "web_2d",
+    "inputs": ["player_transform"],
+    "outputs": ["camera_frame"],
+    "dependencies": ["player/platformer_controller"],
+    "compatible_with": ["player/platformer_controller"],
+    "config_schema": {
+      "follow_lag": {
+        "type": "number",
+        "default": 0.12,
+        "min": 0,
+        "max": 1
+      }
+    },
+    "version": "1.0.0",
+    "test_status": "passed"
+  },
+  {
+    "id": "enemy/basic_enemy",
+    "category": "enemy_ai",
+    "engine_target": "web_2d",
+    "inputs": ["player_transform", "grounded_state"],
+    "outputs": ["enemy_state", "damage_events"],
+    "dependencies": ["physics/gravity"],
+    "compatible_with": ["player/platformer_controller"],
+    "config_schema": {
+      "move_speed": {
+        "type": "number",
+        "default": 2.5,
+        "min": 0.5,
+        "max": 8
+      }
+    },
+    "version": "1.0.0",
+    "test_status": "passed"
+  },
+  {
+    "id": "systems/checkpoint",
+    "category": "systems",
+    "engine_target": "web_2d",
+    "inputs": ["player_transform"],
+    "outputs": ["respawn_point"],
+    "dependencies": ["player/platformer_controller"],
+    "compatible_with": ["player/platformer_controller"],
+    "config_schema": {
+      "respawn_delay_ms": {
+        "type": "integer",
+        "default": 800,
+        "min": 0,
+        "max": 5000
+      }
+    },
+    "version": "1.0.0",
+    "test_status": "passed"
+  },
+  {
+    "id": "systems/coin_collectible",
+    "category": "systems",
+    "engine_target": "web_2d",
+    "inputs": ["player_transform"],
+    "outputs": ["score_events"],
+    "dependencies": [],
+    "compatible_with": ["player/platformer_controller"],
+    "config_schema": {
+      "value": {
+        "type": "integer",
+        "default": 1,
+        "min": 1,
+        "max": 100
+      }
+    },
+    "version": "1.0.0",
+    "test_status": "passed"
+  },
+  {
+    "id": "player/fps_controller",
+    "category": "player_mechanics",
+    "engine_target": "web_3d",
+    "inputs": ["keyboard", "mouse"],
+    "outputs": ["transform", "camera_pose", "velocity"],
+    "dependencies": ["physics/character_body"],
+    "compatible_with": ["combat/hitscan_weapon", "systems/wave_manager"],
+    "config_schema": {
+      "move_speed": {
+        "type": "number",
+        "default": 5.5,
+        "min": 1,
+        "max": 12
+      },
+      "look_sensitivity": {
+        "type": "number",
+        "default": 0.8,
+        "min": 0.1,
+        "max": 4
+      }
+    },
+    "version": "1.0.0",
+    "test_status": "passed"
+  },
+  {
+    "id": "combat/hitscan_weapon",
+    "category": "combat",
+    "engine_target": "web_3d",
+    "inputs": ["camera_pose", "mouse"],
+    "outputs": ["damage_events", "projectile_traces"],
+    "dependencies": ["player/fps_controller"],
+    "compatible_with": ["ai/basic_zombie", "systems/wave_manager"],
+    "config_schema": {
+      "damage": {
+        "type": "number",
+        "default": 20,
+        "min": 1,
+        "max": 100
+      },
+      "magazine_size": {
+        "type": "integer",
+        "default": 30,
+        "min": 1,
+        "max": 120
+      }
+    },
+    "version": "1.0.0",
+    "test_status": "passed"
+  },
+  {
+    "id": "ai/basic_zombie",
+    "category": "enemy_ai",
+    "engine_target": "web_3d",
+    "inputs": ["player_transform", "nav_goal"],
+    "outputs": ["enemy_state", "damage_events"],
+    "dependencies": ["physics/character_body"],
+    "compatible_with": ["combat/hitscan_weapon", "systems/wave_manager"],
+    "config_schema": {
+      "move_speed": {
+        "type": "number",
+        "default": 1.5,
+        "min": 0.5,
+        "max": 5
+      },
+      "health": {
+        "type": "integer",
+        "default": 60,
+        "min": 1,
+        "max": 500
+      }
+    },
+    "version": "1.0.0",
+    "test_status": "passed"
+  },
+  {
+    "id": "systems/wave_manager",
+    "category": "systems",
+    "engine_target": "web_3d",
+    "inputs": ["enemy_state"],
+    "outputs": ["spawn_events", "wave_state"],
+    "dependencies": ["ai/basic_zombie"],
+    "compatible_with": ["combat/hitscan_weapon", "player/fps_controller"],
+    "config_schema": {
+      "starting_wave_size": {
+        "type": "integer",
+        "default": 5,
+        "min": 1,
+        "max": 50
+      },
+      "wave_growth": {
+        "type": "integer",
+        "default": 2,
+        "min": 1,
+        "max": 10
+      }
+    },
+    "version": "1.0.0",
+    "test_status": "passed"
+  },
+  {
+    "id": "physics/character_body",
+    "category": "physics",
+    "engine_target": "web_3d",
+    "inputs": ["transform"],
+    "outputs": ["collision_events", "grounded_state"],
+    "dependencies": [],
+    "compatible_with": ["player/fps_controller", "ai/basic_zombie"],
+    "config_schema": {
+      "height": {
+        "type": "number",
+        "default": 1.8,
+        "min": 0.5,
+        "max": 3
+      },
+      "radius": {
+        "type": "number",
+        "default": 0.4,
+        "min": 0.1,
+        "max": 2
+      }
+    },
+    "version": "1.0.0",
+    "test_status": "passed"
+  }
+]

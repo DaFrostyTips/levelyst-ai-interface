@@ -1,0 +1,333 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+}
+
+@layer base {
+  :root {
+    --background: 223 42% 10%;
+    --foreground: 220 25% 96%;
+    --card: 221 36% 18%;
+    --card-foreground: 220 25% 96%;
+    --popover: 221 36% 18%;
+    --popover-foreground: 220 25% 96%;
+    --primary: 219 89% 58%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 221 27% 24%;
+    --secondary-foreground: 220 25% 94%;
+    --muted: 221 26% 20%;
+    --muted-foreground: 220 14% 71%;
+    --accent: 222 30% 22%;
+    --accent-foreground: 220 25% 96%;
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 220 29% 30%;
+    --input: 220 29% 30%;
+    --ring: 219 89% 62%;
+    --chart-1: 12 76% 61%;
+    --chart-2: 173 58% 39%;
+    --chart-3: 197 37% 24%;
+    --chart-4: 43 74% 66%;
+    --chart-5: 27 87% 67%;
+    --radius: 0.75rem;
+    --sidebar-background: 222 33% 18%;
+    --sidebar-foreground: 220 20% 92%;
+    --sidebar-primary: 219 89% 58%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 223 28% 23%;
+    --sidebar-accent-foreground: 220 20% 92%;
+    --sidebar-border: 220 25% 29%;
+    --sidebar-ring: 219 89% 62%;
+
+    --lv-bg: #0b1220;
+    --lv-panel: rgba(15, 23, 42, 0.62);
+    --lv-panel-border: rgba(198, 220, 255, 0.2);
+    --lv-glass-border: rgba(226, 238, 255, 0.18);
+    --lv-glass-highlight: rgba(255, 255, 255, 0.2);
+    --lv-glass-cool: rgba(96, 165, 250, 0.16);
+    --lv-glass-violet: rgba(168, 85, 247, 0.14);
+    --lv-glass-shadow: 0 24px 64px rgba(2, 6, 23, 0.5);
+    --lv-glass-shadow-soft: 0 16px 38px rgba(2, 6, 23, 0.38);
+    --lv-blue: #3b82f6;
+    --lv-purple: #8b5cf6;
+    --lv-cyan: #22d3ee;
+    --lv-glow: 0 0 36px rgba(59, 130, 246, 0.25);
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
+    background-color: var(--lv-bg);
+  }
+}
+
+@layer utilities {
+  .font-display {
+    font-family: var(--font-display), ui-sans-serif, system-ui, sans-serif;
+  }
+
+  .font-code {
+    font-family: var(--font-mono), ui-monospace, Menlo, Monaco, "Courier New", monospace;
+  }
+
+  .lv-panel {
+    background:
+      linear-gradient(180deg, rgba(16, 23, 39, 0.8), rgba(8, 12, 24, 0.66)),
+      radial-gradient(circle at top left, rgba(96, 165, 250, 0.14), transparent 34%),
+      radial-gradient(circle at top right, rgba(168, 85, 247, 0.12), transparent 32%) !important;
+    border-color: var(--lv-panel-border) !important;
+    box-shadow:
+      inset 0 1px 0 var(--lv-glass-highlight),
+      inset 0 -1px 0 rgba(255, 255, 255, 0.04),
+      var(--lv-glass-shadow-soft) !important;
+    backdrop-filter: blur(22px) saturate(165%) !important;
+  }
+
+  .lv-glass-shell {
+    background:
+      linear-gradient(180deg, rgba(16, 23, 39, 0.82), rgba(8, 12, 24, 0.66)),
+      radial-gradient(circle at top left, var(--lv-glass-cool), transparent 36%),
+      radial-gradient(circle at 85% 0%, var(--lv-glass-violet), transparent 32%) !important;
+    border: 1px solid var(--lv-glass-border) !important;
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.24),
+      inset 0 -1px 0 rgba(255, 255, 255, 0.04),
+      0 0 0 1px rgba(148, 163, 184, 0.04),
+      var(--lv-glass-shadow) !important;
+    backdrop-filter: blur(28px) saturate(180%) !important;
+  }
+
+  .lv-glass-hud {
+    background:
+      linear-gradient(180deg, rgba(12, 18, 32, 0.82), rgba(8, 12, 24, 0.68)),
+      radial-gradient(circle at top left, rgba(96, 165, 250, 0.12), transparent 34%) !important;
+    border: 1px solid rgba(224, 236, 255, 0.16) !important;
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.18),
+      inset 0 -1px 0 rgba(255, 255, 255, 0.04),
+      0 18px 36px rgba(2, 6, 23, 0.34) !important;
+    backdrop-filter: blur(22px) saturate(165%) !important;
+  }
+
+  .lv-glass-modal {
+    background:
+      linear-gradient(180deg, rgba(16, 23, 39, 0.92), rgba(8, 12, 24, 0.82)),
+      radial-gradient(circle at top left, rgba(96, 165, 250, 0.18), transparent 34%),
+      radial-gradient(circle at top right, rgba(168, 85, 247, 0.16), transparent 32%) !important;
+    border: 1px solid rgba(230, 240, 255, 0.2) !important;
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.26),
+      inset 0 -1px 0 rgba(255, 255, 255, 0.05),
+      0 30px 82px rgba(2, 6, 23, 0.58) !important;
+    backdrop-filter: blur(34px) saturate(190%) !important;
+  }
+
+  .lv-chrome-control {
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.04)),
+      linear-gradient(180deg, rgba(17, 24, 39, 0.92), rgba(10, 15, 26, 0.88)) !important;
+    border-color: rgba(226, 238, 255, 0.16) !important;
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.18),
+      inset 0 -1px 0 rgba(255, 255, 255, 0.04),
+      0 12px 28px rgba(2, 6, 23, 0.24) !important;
+    backdrop-filter: blur(18px) saturate(165%) !important;
+  }
+
+  .lv-chrome-control:hover {
+    border-color: rgba(165, 219, 255, 0.28) !important;
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.22),
+      inset 0 -1px 0 rgba(255, 255, 255, 0.05),
+      0 16px 34px rgba(2, 6, 23, 0.28),
+      0 0 0 1px rgba(34, 211, 238, 0.06) !important;
+  }
+
+  .lv-chrome-control:focus-visible {
+    outline: 2px solid rgba(103, 232, 249, 0.55);
+    outline-offset: 2px;
+  }
+}
+
+@keyframes lvGridDrift {
+  0% {
+    background-position: 0 0, 0 0;
+  }
+  100% {
+    background-position: 42px 42px, 42px 42px;
+  }
+}
+
+@keyframes lvGridGlow {
+  0% {
+    opacity: 0.2;
+  }
+  50% {
+    opacity: 0.4;
+  }
+  100% {
+    opacity: 0.2;
+  }
+}
+
+@keyframes lvNodePulse {
+  0% {
+    box-shadow: 0 0 0 rgba(59, 130, 246, 0.12);
+  }
+  50% {
+    box-shadow: 0 0 26px rgba(59, 130, 246, 0.28);
+  }
+  100% {
+    box-shadow: 0 0 0 rgba(59, 130, 246, 0.12);
+  }
+}
+
+@keyframes lvSuggestionFloat {
+  0% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-6px);
+  }
+  100% {
+    transform: translateY(0px);
+  }
+}
+
+@keyframes lvTyping {
+  0% {
+    transform: scale(0.92);
+    opacity: 0.6;
+  }
+  50% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(0.92);
+    opacity: 0.6;
+  }
+}
+
+@keyframes lvSignalDash {
+  0% {
+    stroke-dashoffset: 16;
+  }
+  100% {
+    stroke-dashoffset: -16;
+  }
+}
+
+@keyframes lvSimulateReady {
+  0% {
+    box-shadow: 0 0 0 rgba(34, 211, 238, 0.15);
+  }
+  50% {
+    box-shadow: 0 0 22px rgba(34, 211, 238, 0.42);
+  }
+  100% {
+    box-shadow: 0 0 0 rgba(34, 211, 238, 0.15);
+  }
+}
+
+.lv-grid-drift {
+  animation: lvGridDrift 18s linear infinite;
+}
+
+.lv-grid-glow {
+  animation: lvGridGlow 3.8s ease-in-out infinite;
+}
+
+.lv-node-pulse {
+  animation: lvNodePulse 2.6s ease-in-out infinite;
+}
+
+.lv-suggestion-float {
+  animation: lvSuggestionFloat 4.2s ease-in-out infinite;
+}
+
+.lv-copilot-typing {
+  animation: lvTyping 1.2s ease-in-out infinite;
+}
+
+.lv-signal-dash {
+  animation: lvSignalDash 1.25s linear infinite;
+}
+
+.lv-simulate-ready {
+  animation: lvSimulateReady 2.2s ease-in-out infinite;
+  border: 1px solid rgba(34, 211, 238, 0.45);
+  background: linear-gradient(90deg, rgba(56, 189, 248, 0.24), rgba(139, 92, 246, 0.3));
+}
+
+.lv-simulate-connected {
+  border: 1px solid rgba(34, 211, 238, 0.35);
+  background: linear-gradient(90deg, rgba(56, 189, 248, 0.16), rgba(59, 130, 246, 0.2));
+}
+
+.lv-simulate-warning {
+  border: 1px solid rgba(251, 191, 36, 0.45);
+  background: linear-gradient(90deg, rgba(251, 191, 36, 0.2), rgba(249, 115, 22, 0.24));
+}
+
+[data-lv-motion="high"] .lv-grid-drift {
+  animation-duration: 15s;
+}
+
+[data-lv-motion="high"] .lv-suggestion-float {
+  animation-duration: 3.6s;
+}
+
+[data-lv-motion="medium"] .lv-grid-drift {
+  animation-duration: 20s;
+}
+
+[data-lv-motion="medium"] .lv-node-pulse {
+  animation-duration: 3.1s;
+}
+
+[data-lv-motion="reduced"] .lv-grid-drift,
+[data-lv-motion="reduced"] .lv-grid-glow,
+[data-lv-motion="reduced"] .lv-node-pulse,
+[data-lv-motion="reduced"] .lv-suggestion-float,
+[data-lv-motion="reduced"] .lv-copilot-typing,
+[data-lv-motion="reduced"] .lv-signal-dash {
+  animation: none !important;
+}
+
+.lv-scrollbar-hidden,
+* {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.lv-scrollbar-hidden::-webkit-scrollbar,
+*::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lv-grid-drift,
+  .lv-grid-glow,
+  .lv-node-pulse,
+  .lv-suggestion-float,
+  .lv-copilot-typing {
+    animation: none !important;
+  }
+
+  * {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+}
