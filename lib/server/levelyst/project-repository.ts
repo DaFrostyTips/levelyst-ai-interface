@@ -1,6 +1,5 @@
 import fs from "node:fs"
 import path from "node:path"
-import { DatabaseSync } from "node:sqlite"
 import {
   editorWorkspaceSnapshotSchema,
   generationJobEventSchema,
@@ -25,6 +24,8 @@ import {
 } from "./defaults"
 import { getDemoProject, listDemoProjects } from "./demo-projects"
 import { getLevelystDeployMode } from "./deploy-mode"
+
+type DatabaseSync = import("node:sqlite").DatabaseSync
 
 export interface CreateProjectInput {
   name?: string
@@ -63,6 +64,10 @@ export interface LevelystRepository {
 const repositoryCache = new Map<string, SqliteProjectRepository>()
 let demoRepository: DemoProjectRepository | null = null
 
+function loadDatabaseSync(): typeof import("node:sqlite").DatabaseSync {
+  return (require("node:sqlite") as typeof import("node:sqlite")).DatabaseSync
+}
+
 export function getLevelystRepository(): LevelystRepository {
   if (getLevelystDeployMode() === "demo") {
     demoRepository ??= new DemoProjectRepository()
@@ -86,6 +91,8 @@ export class SqliteProjectRepository implements LevelystRepository {
   private readonly db: DatabaseSync
 
   constructor(private readonly dbPath: string) {
+    const DatabaseSync = loadDatabaseSync()
+
     fs.mkdirSync(path.dirname(dbPath), { recursive: true })
     this.db = new DatabaseSync(dbPath)
     this.db.exec("PRAGMA foreign_keys = ON;")
