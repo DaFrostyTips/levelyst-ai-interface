@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server"
 import { describe, expect, it, vi } from "vitest"
 
 vi.mock("@/components/editor-v2/help-tooltip", () => ({
-  HelpTooltip: () => null,
+  HelpTooltip: ({ label }: { label: string }) => createElement("button", { "aria-label": `${label} help` }),
 }))
 
 vi.mock("@/components/ui/badge", () => ({
@@ -25,33 +25,22 @@ vi.mock("@/components/ui/textarea", () => ({
 import { CopilotPanel } from "@/components/editor-v2/copilot-panel"
 
 describe("copilot panel", () => {
-  it("renders the AI runtime status copy without introducing a blocking state", () => {
+  it("renders the AI copilot help affordance without the removed runtime block", () => {
     const markup = renderToStaticMarkup(
       createElement(CopilotPanel, {
         prompt: "",
         onPromptChange: () => {},
         onPromptSubmit: () => {},
         gamePlan: [],
-        planningSteps: [],
-        recommendations: [],
         promptChips: [],
         onPromptChip: () => {},
-        planningProfile: "default",
-        onPlanningProfileChange: () => {},
-        localAiStatus: {
-          state: "fallback",
-          badgeLabel: "Fallback Mode",
-          detail: "Rule-based planning stays instant while Ollama is offline, so prompts still work for the demo.",
-          actionHint: "Start Ollama, then run npm run warmup:local-ai to preload qwen3:4b.",
-          warmupCommand: "npm run warmup:local-ai",
-          model: "qwen3:4b",
-        },
       }),
     )
 
-    expect(markup).toContain("Fallback Mode")
-    expect(markup).toContain("AI Runtime")
-    expect(markup).toContain("npm run warmup:local-ai")
-    expect(markup).not.toContain("Analyzing Prompt")
+    expect(markup).toContain("AI Copilot")
+    expect(markup).toContain("Prompt Prototype")
+    expect(markup).toContain("aria-label=\"AI Copilot help\"")
+    expect(markup).not.toContain("AI Runtime")
+    expect(markup).not.toContain("Fallback Mode")
   })
 })

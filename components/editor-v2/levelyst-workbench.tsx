@@ -134,6 +134,7 @@ import {
   hydrateProjectRecord,
 } from "@/lib/levelyst/client-mappers"
 import {
+  createCenteredCanvasViewport,
   createCompileSignature,
   createGenerationReplayOffset,
   createDependencyEdgeFromGraphEdge,
@@ -141,6 +142,7 @@ import {
   createNodeFromGraphNode,
   offsetWorkspaceNodePositions,
   shouldInvalidateCompiledSpec,
+  updateWorkspaceCanvasViewport,
   updateGenerationPlanningSteps,
   upsertDependencyEdge,
   upsertGeneratedNode,
@@ -299,7 +301,7 @@ const fpsFollowUpChips = [
 
 export function LevelystWorkbench({
   initialProjects,
-  initialLocalAiStatus,
+  initialLocalAiStatus: _initialLocalAiStatus,
   deployMode,
   experienceMode,
 }: LevelystWorkbenchProps) {
@@ -643,6 +645,15 @@ export function LevelystWorkbench({
     if (!activeProject || activeProjectLoadedRef.current === activeProject.id) return
 
     const nextNodes = cloneNodes(activeProject.workspace.nodes)
+    const centeredViewport =
+      nextNodes.length === 0 && isLegacyDefaultViewport(activeProject.workspace.canvasViewport)
+        ? (() => {
+            const bounds = editorSurfaceRef.current?.getBoundingClientRect()
+            return bounds
+              ? createCenteredCanvasViewport(bounds.width, bounds.height, activeProject.workspace.canvasViewport.scale)
+              : { ...activeProject.workspace.canvasViewport }
+          })()
+        : { ...activeProject.workspace.canvasViewport }
     setNodes(nextNodes)
     setGraphEdges(deriveDependencyEdges(nextNodes))
     setGroups(cloneGroups(activeProject.workspace.groups))
@@ -650,7 +661,7 @@ export function LevelystWorkbench({
     setPrompt(activeProject.workspace.prompt)
     setPlanningSteps(clonePlanningSteps(activeProject.workspace.planningSteps))
     setGamePlan([...activeProject.workspace.gamePlan])
-    setCanvasViewport({ ...activeProject.workspace.canvasViewport })
+    setCanvasViewport(centeredViewport)
     setWorkspacePendingBlueprint(cloneBlueprint(activeProject.workspace.pendingBlueprint))
     setWorkspacePendingPromptMode(activeProject.workspace.pendingPromptMode)
     setWorkspaceBlueprintState(activeProject.workspace.blueprintState)
@@ -1020,12 +1031,7 @@ export function LevelystWorkbench({
     (scale = 1): CanvasViewport => {
       const bounds = editorSurfaceRef.current?.getBoundingClientRect()
       if (!bounds) {
-        return {
-          x: LEGACY_VIEWPORT_X,
-          y: LEGACY_VIEWPORT_Y,
-          scale,
-          isPanning: false,
-        }
+        return createCenteredCanvasViewport(WORLD_WIDTH, WORLD_HEIGHT, scale)
       }
       return createCenteredCanvasViewport(bounds.width, bounds.height, scale)
     },
@@ -1143,8 +1149,12 @@ export function LevelystWorkbench({
               setBlueprintEntryPoint(null)
               const { project } = await getProject(activeProjectId)
               const centeredProject =
-                shouldCenterGeneratedReplayRef.current && generationReplayOffsetRef.current
-                  ? applyProjectWorkspaceOffset(project, generationReplayOffsetRef.current)
+                shouldCenterGeneratedReplayRef.current
+                  ? applyProjectWorkspaceOffset(
+                      project,
+                      generationReplayOffsetRef.current ?? { x: 0, y: 0 },
+                      options.clearWorkspace ? toWorkspaceViewportSnapshot(centeredViewport) : undefined,
+                    )
                   : project
               if (centeredProject !== project) {
                 await updateWorkspace(activeProjectId, centeredProject.workspace_json)
@@ -2542,7 +2552,6 @@ export function LevelystWorkbench({
         <TopControlBar
           projectName={activeProject?.name ?? "Untitled Project"}
           mode={editorMode}
-          statusBadgeLabel={experienceStatusBadgeLabel}
           motionIntensity={effectiveMotionIntensity}
           readiness={readiness}
           layoutMode={layoutMode}
@@ -2569,22 +2578,6 @@ export function LevelystWorkbench({
           onOpenLibrary={handleOpenLibrary}
           onAddCoreChain={handleAddCoreChain}
         />
-
-        {isReadOnlyDemo ? (
-          <div className="px-2 pb-2 md:px-3">
-            <section className="rounded-2xl border border-amber-300/35 bg-amber-400/10 px-4 py-3 text-sm text-amber-50/90">
-              <p className="font-semibold text-white">Public Demo Mode</p>
-              <p className="mt-1">{readOnlyDemoMessage}</p>
-            </section>
-          </div>
-        ) : isPublicMode ? (
-          <div className="px-2 pb-2 md:px-3">
-            <section className="rounded-2xl border border-cyan-300/35 bg-cyan-400/10 px-4 py-3 text-sm text-cyan-50/90">
-              <p className="font-semibold text-white">{experienceMessageTitle}</p>
-              <p className="mt-1">{publicModeMessage}</p>
-            </section>
-          </div>
-        ) : null}
 
         <main className="min-h-0 flex-1 p-2 md:p-3">
           {!isMobile && (
@@ -2615,14 +2608,8 @@ export function LevelystWorkbench({
                         onPromptChange={setPrompt}
                         onPromptSubmit={handlePromptSubmit}
                         gamePlan={gamePlan}
-                        planningSteps={planningSteps}
-                        recommendations={suggestions}
                         promptChips={activeCopilotPromptChips}
                         onPromptChip={handlePromptChip}
-                        planningProfile={planningProfile}
-                        onPlanningProfileChange={setPlanningProfile}
-                        localAiStatus={initialLocalAiStatus}
-                        onOpenPresentationScreen={() => void openPresentationScreen()}
                         readOnly={isReadOnlyDemo}
                         readOnlyMessage={isReadOnlyDemo ? readOnlyDemoMessage : undefined}
                       />
@@ -2666,8 +2653,6 @@ export function LevelystWorkbench({
                     onHoverNode={setHoveredNodeId}
                     onMoveNode={handleMoveNode}
                     onDropTemplate={addNodeFromTemplate}
-                    suggestions={suggestions}
-                    onApplySuggestion={onApplySuggestion}
                     simulatePhase={simulatePhase}
                     reducedMotion={effectiveMotionIntensity === "reduced"}
                     motionIntensity={effectiveMotionIntensity}
@@ -2719,6 +2704,7 @@ export function LevelystWorkbench({
                           sections={timelineSections}
                           nodes={nodes}
                           selectedNode={selectedNode}
+                          suggestions={suggestions}
                           activeTab={timelineTab}
                           onTabChange={setTimelineTab}
                           onReorderSections={reorderSections}
@@ -2728,6 +2714,7 @@ export function LevelystWorkbench({
                             )
                           }
                           onAttachModuleToSection={attachModuleToSection}
+                          onApplySuggestion={onApplySuggestion}
                         />
                       </div>
                     ) : null}
@@ -2764,8 +2751,6 @@ export function LevelystWorkbench({
                     onHoverNode={setHoveredNodeId}
                     onMoveNode={handleMoveNode}
                     onDropTemplate={addNodeFromTemplate}
-                    suggestions={suggestions}
-                    onApplySuggestion={onApplySuggestion}
                     simulatePhase={simulatePhase}
                     reducedMotion={effectiveMotionIntensity === "reduced"}
                     motionIntensity={effectiveMotionIntensity}
@@ -2794,14 +2779,8 @@ export function LevelystWorkbench({
                     onPromptChange={setPrompt}
                     onPromptSubmit={handlePromptSubmit}
                     gamePlan={gamePlan}
-                    planningSteps={planningSteps}
-                    recommendations={suggestions}
                     promptChips={activeCopilotPromptChips}
                     onPromptChip={handlePromptChip}
-                    planningProfile={planningProfile}
-                    onPlanningProfileChange={setPlanningProfile}
-                    localAiStatus={initialLocalAiStatus}
-                    onOpenPresentationScreen={() => void openPresentationScreen()}
                     readOnly={isReadOnlyDemo}
                     readOnlyMessage={isReadOnlyDemo ? readOnlyDemoMessage : undefined}
                   />
@@ -2811,6 +2790,7 @@ export function LevelystWorkbench({
                     sections={timelineSections}
                     nodes={nodes}
                     selectedNode={selectedNode}
+                    suggestions={suggestions}
                     activeTab={timelineTab}
                     onTabChange={setTimelineTab}
                     onReorderSections={reorderSections}
@@ -2820,6 +2800,7 @@ export function LevelystWorkbench({
                       )
                     }
                     onAttachModuleToSection={attachModuleToSection}
+                    onApplySuggestion={onApplySuggestion}
                   />
                 )}
               </div>
@@ -3106,15 +3087,17 @@ function createCollapsedGroupNode(group: ModuleGroup, nodes: ModuleNode[]): Modu
 function applyProjectWorkspaceOffset(
   project: ProjectDetail,
   offset: { x: number; y: number },
+  viewport?: ProjectDetail["workspace_json"]["canvas_viewport"],
 ): ProjectDetail {
-  const centeredWorkspace = offsetWorkspaceNodePositions(project.workspace_json, offset)
-  if (centeredWorkspace === project.workspace_json) {
+  const positionedWorkspace = offsetWorkspaceNodePositions(project.workspace_json, offset)
+  const framedWorkspace = viewport ? updateWorkspaceCanvasViewport(positionedWorkspace, viewport) : positionedWorkspace
+  if (framedWorkspace === project.workspace_json) {
     return project
   }
 
   return {
     ...project,
-    workspace_json: centeredWorkspace,
+    workspace_json: framedWorkspace,
   }
 }
 
@@ -3225,12 +3208,12 @@ function createDefaultHudLayout(): CanvasHudLayout {
   }
 }
 
-function createCenteredCanvasViewport(width: number, height: number, scale = 1): CanvasViewport {
+function toWorkspaceViewportSnapshot(viewport: CanvasViewport): ProjectDetail["workspace_json"]["canvas_viewport"] {
   return {
-    x: width / 2 - (WORLD_WIDTH * scale) / 2,
-    y: height / 2 - (WORLD_HEIGHT * scale) / 2,
-    scale,
-    isPanning: false,
+    x: viewport.x,
+    y: viewport.y,
+    scale: viewport.scale,
+    is_panning: viewport.isPanning,
   }
 }
 

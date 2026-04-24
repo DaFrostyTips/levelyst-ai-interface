@@ -354,10 +354,11 @@ describe("Phase 4 route handlers", () => {
           if (!current) {
             throw new Error("Project not found.")
           }
-          const nextProject = {
+          const nextProject: typeof current = {
             ...current,
             name: patch.name ?? current.name,
-            workspace_json: patch.workspace_json ?? current.workspace_json,
+            workspace_json:
+              (patch.workspace_json as typeof current.workspace_json | undefined) ?? current.workspace_json,
           }
           projectStore.set(projectId, nextProject)
           return nextProject

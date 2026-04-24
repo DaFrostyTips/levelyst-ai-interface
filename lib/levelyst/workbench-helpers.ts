@@ -4,7 +4,7 @@ import type {
   ModuleGraphEdge,
   ModuleGraphNode,
 } from "@levelyst/contracts"
-import type { DependencyEdge, ModuleNode, ProjectWorkspace } from "@/lib/editor-v2-model"
+import type { CanvasViewport, DependencyEdge, ModuleNode, ProjectWorkspace } from "@/lib/editor-v2-model"
 import { getSystemLabel } from "@/lib/editor-v2-lexicon"
 import { getEditorModuleTemplate } from "@/lib/levelyst/adapters/editor-v2"
 
@@ -125,6 +125,15 @@ export function createGenerationReplayOffset(viewportWorldCenter: { x: number; y
   }
 }
 
+export function createCenteredCanvasViewport(surfaceWidth: number, surfaceHeight: number, scale = 1): CanvasViewport {
+  return {
+    x: surfaceWidth / 2 - (GRAPH_WORLD_WIDTH * scale) / 2,
+    y: surfaceHeight / 2 - (GRAPH_WORLD_HEIGHT * scale) / 2,
+    scale,
+    isPanning: false,
+  }
+}
+
 export function offsetWorkspaceNodePositions(
   workspace: EditorWorkspaceSnapshot,
   offset: GraphPositionOffset,
@@ -140,6 +149,25 @@ export function offsetWorkspaceNodePositions(
       x: clamp(node.x + offset.x, 12, GRAPH_WORLD_WIDTH - GRAPH_NODE_WIDTH - 12),
       y: clamp(node.y + offset.y, 12, GRAPH_WORLD_HEIGHT - GRAPH_NODE_HEIGHT - 12),
     })),
+  }
+}
+
+export function updateWorkspaceCanvasViewport(
+  workspace: EditorWorkspaceSnapshot,
+  viewport: EditorWorkspaceSnapshot["canvas_viewport"],
+): EditorWorkspaceSnapshot {
+  if (
+    Math.abs(workspace.canvas_viewport.x - viewport.x) < 0.5 &&
+    Math.abs(workspace.canvas_viewport.y - viewport.y) < 0.5 &&
+    Math.abs(workspace.canvas_viewport.scale - viewport.scale) < 0.01 &&
+    workspace.canvas_viewport.is_panning === viewport.is_panning
+  ) {
+    return workspace
+  }
+
+  return {
+    ...workspace,
+    canvas_viewport: { ...viewport },
   }
 }
 

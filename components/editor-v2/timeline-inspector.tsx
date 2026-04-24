@@ -6,31 +6,36 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Button } from "@/components/ui/button"
 import { HelpTooltip } from "@/components/editor-v2/help-tooltip"
 import { getSystemLabel } from "@/lib/editor-v2-lexicon"
-import type { LevelSection, ModuleNode } from "@/lib/editor-v2-model"
-import { Clock3, Link2, PackagePlus, Stethoscope } from "lucide-react"
+import type { CopilotSuggestion, LevelSection, ModuleNode } from "@/lib/editor-v2-model"
+import { Clock3, Link2, PackagePlus, Sparkles, Stethoscope } from "lucide-react"
 
 interface TimelineInspectorProps {
   sections: LevelSection[]
   nodes: ModuleNode[]
   selectedNode: ModuleNode | null
+  suggestions: CopilotSuggestion[]
   activeTab?: "timeline" | "inspector"
   onTabChange?: (tab: "timeline" | "inspector") => void
   onReorderSections: (dragId: string, targetId: string) => void
   onToggleSection: (sectionId: string) => void
   onAttachModuleToSection: (moduleId: string, sectionId: string) => void
+  onApplySuggestion: (suggestion: CopilotSuggestion) => void
 }
 
 export function TimelineInspector({
   sections,
   nodes,
   selectedNode,
+  suggestions,
   activeTab = "timeline",
   onTabChange,
   onReorderSections,
   onToggleSection,
   onAttachModuleToSection,
+  onApplySuggestion,
 }: TimelineInspectorProps) {
   const sortedSections = useMemo(() => [...sections].sort((a, b) => a.order - b.order), [sections])
+  const visibleSuggestions = useMemo(() => suggestions.slice(0, 2), [suggestions])
   const selectedNodeSectionCount = useMemo(
     () => sections.filter((section) => selectedNode && section.moduleIds.includes(selectedNode.id)).length,
     [sections, selectedNode],
@@ -55,6 +60,34 @@ export function TimelineInspector({
             </TabsTrigger>
           </TabsList>
         </div>
+
+        {visibleSuggestions.length > 0 ? (
+          <div className="border-b border-white/10 p-3">
+            <div className="rounded-xl border border-purple-300/20 bg-purple-400/8 p-3">
+              <div className="flex items-center gap-2">
+                <Sparkles className="h-4 w-4 text-cyan-200" />
+                <p className="text-xs font-semibold uppercase tracking-[0.14em] text-cyan-100/80">Recommendations</p>
+              </div>
+              <div className="mt-3 grid gap-3 lg:grid-cols-2">
+                {visibleSuggestions.map((suggestion) => (
+                  <article key={suggestion.id} className="lv-glass-hud rounded-lg border border-purple-300/25 p-3">
+                    <p className="text-sm font-semibold text-white">{suggestion.title}</p>
+                    <p className="mt-1 text-sm leading-relaxed text-cyan-100/78">{suggestion.reason}</p>
+                    {suggestion.moduleTypeIds.length > 0 ? (
+                      <Button
+                        size="sm"
+                        onClick={() => onApplySuggestion(suggestion)}
+                        className="mt-3 h-8 bg-gradient-to-r from-blue-500 to-purple-500 text-white"
+                      >
+                        Apply Suggestion
+                      </Button>
+                    ) : null}
+                  </article>
+                ))}
+              </div>
+            </div>
+          </div>
+        ) : null}
 
         <TabsContent value="timeline" className="lv-scrollbar-hidden mt-0 min-h-0 flex-1 overflow-auto p-4">
           <div className="grid gap-5 lg:grid-cols-[300px_1fr]">
@@ -121,9 +154,7 @@ export function TimelineInspector({
 
                   {section.expanded && (
                     <div className="mt-2 flex flex-wrap gap-2">
-                      {section.moduleIds.length === 0 && (
-                        <p className="text-xs text-cyan-100/60">Drop module chips here.</p>
-                      )}
+                      {section.moduleIds.length === 0 && <p className="text-xs text-cyan-100/60">Drop module chips here.</p>}
                       {section.moduleIds.map((moduleId) => {
                         const node = nodes.find((entry) => entry.id === moduleId)
                         return (

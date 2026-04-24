@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest"
 import {
   classifyCanvasWheelGesture,
+  createCenteredCanvasViewport,
   createCompileSignature,
   createDependencyEdgeFromGraphEdge,
   createGenerationPlanningSteps,
@@ -8,6 +9,7 @@ import {
   createNodeFromGraphNode,
   offsetWorkspaceNodePositions,
   shouldInvalidateCompiledSpec,
+  updateWorkspaceCanvasViewport,
   updateGenerationPlanningSteps,
   upsertDependencyEdge,
   upsertGeneratedNode,
@@ -88,6 +90,15 @@ describe("workbench helpers", () => {
     expect(createGenerationReplayOffset({ x: 1500, y: 980 })).toEqual({ x: 200, y: 80 })
   })
 
+  it("creates a centered canvas viewport for a fresh empty project", () => {
+    expect(createCenteredCanvasViewport(1280, 720)).toEqual({
+      x: -660,
+      y: -540,
+      scale: 1,
+      isPanning: false,
+    })
+  })
+
   it("offsets persisted workspace node positions without changing non-position fields", () => {
     const workspace = offsetWorkspaceNodePositions(
       {
@@ -126,6 +137,55 @@ describe("workbench helpers", () => {
       y: 780,
     })
     expect(workspace.prompt).toBe("Create a platformer")
+  })
+
+  it("updates the persisted workspace viewport without changing graph data", () => {
+    const workspace = updateWorkspaceCanvasViewport(
+      {
+        nodes: [
+          {
+            id: "node_player_platformer_controller",
+            module_id: "player/platformer_controller",
+            x: 1020,
+            y: 860,
+            active: true,
+          },
+        ],
+        groups: [],
+        timeline_sections: [],
+        prompt: "Create a platformer",
+        game_plan: [],
+        planning_steps: [],
+        canvas_viewport: {
+          x: 260,
+          y: 140,
+          scale: 1,
+          is_panning: false,
+        },
+        pending_blueprint: null,
+        pending_blueprint_diagnostics: null,
+        pending_prompt_mode: null,
+        blueprint_state: "idle",
+      },
+      {
+        x: -660,
+        y: -540,
+        scale: 1,
+        is_panning: false,
+      },
+    )
+
+    expect(workspace.canvas_viewport).toEqual({
+      x: -660,
+      y: -540,
+      scale: 1,
+      is_panning: false,
+    })
+    expect(workspace.nodes[0]).toMatchObject({
+      id: "node_player_platformer_controller",
+      x: 1020,
+      y: 860,
+    })
   })
 
   it("classifies pinch, trackpad pan, and mouse wheel gestures separately", () => {

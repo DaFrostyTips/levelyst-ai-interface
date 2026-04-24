@@ -11,7 +11,6 @@ import { cn } from "@/lib/utils"
 import type {
   CanvasHudLayout,
   CanvasViewport,
-  CopilotSuggestion,
   DependencyEdge,
   EditorMode,
   MotionIntensity,
@@ -19,7 +18,7 @@ import type {
   ModuleNode,
   NodeHighlightState,
 } from "@/lib/editor-v2-model"
-import { BringToFront, Layers3, Plus, Sparkles } from "lucide-react"
+import { BringToFront, Layers3 } from "lucide-react"
 
 interface GameCanvasProps {
   nodes: ModuleNode[]
@@ -41,8 +40,6 @@ interface GameCanvasProps {
   onHoverNode: (nodeId: string | null) => void
   onMoveNode: (nodeId: string, x: number, y: number) => void
   onDropTemplate: (typeId: string, x: number, y: number) => void
-  suggestions: CopilotSuggestion[]
-  onApplySuggestion: (suggestion: CopilotSuggestion) => void
   simulatePhase: "idle" | "zooming" | "handoff" | "settle"
   reducedMotion: boolean
   motionIntensity: MotionIntensity
@@ -82,8 +79,6 @@ export function GameCanvas({
   onHoverNode,
   onMoveNode,
   onDropTemplate,
-  suggestions,
-  onApplySuggestion,
   simulatePhase,
   reducedMotion,
   motionIntensity,
@@ -100,7 +95,6 @@ export function GameCanvas({
   const [canvasSize, setCanvasSize] = useState({ width: 1, height: 1 })
   const [hudExpanded, setHudExpanded] = useState({
     info: false,
-    suggestions: false,
     tools: false,
     minimap: false,
   })
@@ -117,7 +111,6 @@ export function GameCanvas({
     | null
   >(null)
 
-  const suggestionCards = useMemo(() => suggestions.slice(0, 2), [suggestions])
   const transitiveSet = useMemo(() => new Set(highlightState.transitiveNodeIds), [highlightState.transitiveNodeIds])
   const directSet = useMemo(() => new Set(highlightState.directNodeIds), [highlightState.directNodeIds])
   const selectedSet = useMemo(() => new Set(selectedNodeIds), [selectedNodeIds])
@@ -129,18 +122,16 @@ export function GameCanvas({
   const parallaxStrength = motionIntensity === "high" ? 16 : 10
   const ambientOpacity = motionIntensity === "high" ? 0.82 : 0.66
   const compactInfo = hudLayout.info.collapsed && !hudExpanded.info
-  const compactSuggestions = hudLayout.suggestions.collapsed && !hudExpanded.suggestions
   const compactTools = hudLayout.tools.collapsed && !hudExpanded.tools
   const compactMinimap = hudLayout.minimap.collapsed && !hudExpanded.minimap
 
   useEffect(() => {
     setHudExpanded((prev) => ({
       info: hudLayout.info.collapsed ? prev.info : false,
-      suggestions: hudLayout.suggestions.collapsed ? prev.suggestions : false,
       tools: hudLayout.tools.collapsed ? prev.tools : false,
       minimap: hudLayout.minimap.collapsed ? prev.minimap : false,
     }))
-  }, [hudLayout.info.collapsed, hudLayout.minimap.collapsed, hudLayout.suggestions.collapsed, hudLayout.tools.collapsed])
+  }, [hudLayout.info.collapsed, hudLayout.minimap.collapsed, hudLayout.tools.collapsed])
 
   const minimapViewportRect = useMemo(() => {
     const visibleWorldX = clamp(-viewport.x / Math.max(viewport.scale, 0.001), 0, WORLD_WIDTH)
@@ -712,63 +703,6 @@ export function GameCanvas({
               )}
             </div>
           )}
-          </div>
-        )}
-
-        {mode === "build" && suggestionCards.length > 0 && (
-          <div className={cn("absolute z-20", hudAnchorClass(hudLayout.suggestions.anchor))}>
-            {compactSuggestions ? (
-              <Button
-                size="sm"
-                variant="outline"
-                className="lv-chrome-control h-8 border-purple-300/35 text-purple-100"
-                onClick={() => setHudExpanded((prev) => ({ ...prev, suggestions: true }))}
-                data-panel-interactive="true"
-              >
-                Suggestions
-              </Button>
-            ) : (
-              <div className="grid w-64 gap-3">
-                {suggestionCards.map((suggestion) => (
-                  <div
-                    key={suggestion.id}
-                    className={cn(
-                      "lv-glass-hud rounded-xl border-purple-300/35 p-3",
-                      ambientMotionAllowed && "lv-suggestion-float",
-                    )}
-                    data-panel-interactive="true"
-                  >
-                    <div className="mb-2 flex items-center gap-2 text-purple-100">
-                      <Sparkles className="h-4 w-4 text-cyan-200" />
-                      <p className="text-xs font-semibold uppercase tracking-wide">Suggestion</p>
-                      {hudLayout.suggestions.collapsed && (
-                        <button
-                          type="button"
-                          className="ml-auto text-[10px] text-purple-100/75 hover:text-purple-50"
-                          onClick={() => setHudExpanded((prev) => ({ ...prev, suggestions: false }))}
-                          data-panel-interactive="true"
-                        >
-                          Minimize
-                        </button>
-                      )}
-                    </div>
-                    <p className="text-sm font-semibold text-white">{suggestion.title}</p>
-                    <p className="mt-1 text-xs text-blue-100/75">{suggestion.reason}</p>
-                    {suggestion.moduleTypeIds.length > 0 && (
-                      <Button
-                        size="sm"
-                        onClick={() => onApplySuggestion(suggestion)}
-                        className="mt-3 h-8 w-full bg-gradient-to-r from-blue-500 to-purple-500 text-white focus-visible:ring-2 focus-visible:ring-cyan-300/60"
-                        data-panel-interactive="true"
-                      >
-                        <Plus className="mr-2 h-4 w-4" />
-                        Add Module
-                      </Button>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
           </div>
         )}
 

@@ -34,7 +34,6 @@ import { cn } from "@/lib/utils"
 interface TopControlBarProps {
   projectName: string
   mode: EditorMode
-  statusBadgeLabel?: string | null
   motionIntensity: MotionIntensity
   readiness: SimulationReadiness
   layoutMode: WorkspaceLayoutMode
@@ -55,7 +54,6 @@ const readinessLabelMap: Record<SimulationReadiness["status"], string> = {
 export function TopControlBar({
   projectName,
   mode,
-  statusBadgeLabel,
   motionIntensity,
   readiness,
   layoutMode,
@@ -66,7 +64,7 @@ export function TopControlBar({
   onSetMotionIntensity,
   onModeChange,
 }: TopControlBarProps) {
-  const modeButtons: EditorMode[] = ["build", "simulate", "debug"]
+  const modeButtons: EditorMode[] = ["build", "simulate"]
   const isWideLayout = layoutMode === "wide"
   const isMobileLayout = layoutMode === "mobile"
   const simulateClass =
@@ -81,7 +79,7 @@ export function TopControlBar({
       <div
         className={cn(
           "grid w-full items-center gap-3",
-          isMobileLayout ? "grid-cols-1" : "grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]",
+          isMobileLayout ? "grid-cols-1" : "grid-cols-[minmax(0,1fr)_auto_auto]",
         )}
       >
         <div className={cn("flex min-w-0 items-center gap-2 md:gap-3", isMobileLayout ? "justify-between" : "justify-self-start")}>
@@ -101,7 +99,12 @@ export function TopControlBar({
           </div>
         </div>
 
-        <div className={cn("flex flex-wrap items-center justify-center gap-2", isMobileLayout ? "justify-start" : "justify-self-center")}>
+        <div
+          className={cn(
+            "flex items-center justify-center gap-2",
+            isMobileLayout ? "flex-wrap justify-start" : "justify-self-center whitespace-nowrap",
+          )}
+        >
           <div className="lv-glass-hud flex items-center rounded-xl p-1">
             <TooltipProvider delayDuration={180}>
               {modeButtons.map((entry) => {
@@ -158,7 +161,12 @@ export function TopControlBar({
           </Badge>
         </div>
 
-        <div className={cn("flex flex-wrap items-center gap-2", isMobileLayout ? "justify-start" : "justify-self-end justify-end")}>
+        <div
+          className={cn(
+            "flex items-center gap-2",
+            isMobileLayout ? "flex-wrap justify-start" : "justify-self-end justify-end whitespace-nowrap",
+          )}
+        >
           <Button
             variant="outline"
             size="icon"
@@ -284,11 +292,6 @@ export function TopControlBar({
             </DropdownMenu>
           )}
 
-          {statusBadgeLabel ? (
-            <Badge className="lv-glass-hud border border-cyan-400/30 bg-cyan-400/10 px-2 py-1 text-cyan-100">
-              {statusBadgeLabel}
-            </Badge>
-          ) : null}
         </div>
       </div>
     </header>
