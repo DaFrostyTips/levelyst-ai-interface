@@ -8,6 +8,7 @@ export type EditorModuleIconKey =
   | "basic_enemy"
   | "checkpoint"
   | "coin"
+  | "side_scroller_projectile_weapon"
   | "fps_controller"
   | "hitscan_weapon"
   | "basic_zombie"
@@ -76,9 +77,15 @@ const decorationMap: Record<
   },
   "enemy/basic_enemy": {
     label: "Basic Enemy",
-    description: "Simple chase-and-patrol enemy behavior for platformer encounters.",
-    supports: ["Patrol", "Chase"],
+    description: "Simple patrol enemy behavior with health and hit reactions for platformer encounters.",
+    supports: ["Patrol", "Damageable"],
     iconKey: "basic_enemy",
+  },
+  "combat/side_scroller_projectile_weapon": {
+    label: "Side-Scroller Projectile Weapon",
+    description: "Adds a readable side-view shooting loop with projectile traces and enemy damage.",
+    supports: ["Shoot", "Projectiles", "Damage"],
+    iconKey: "side_scroller_projectile_weapon",
   },
   "systems/checkpoint": {
     label: "Checkpoint System",
@@ -183,6 +190,11 @@ export const editorPromptAliases: Record<string, string> = {
   fps_controller: "player/fps_controller",
   combat: "combat/hitscan_weapon",
   hitscan_weapon: "combat/hitscan_weapon",
+  gun: "combat/side_scroller_projectile_weapon",
+  guns: "combat/side_scroller_projectile_weapon",
+  shoot: "combat/side_scroller_projectile_weapon",
+  bullets: "combat/side_scroller_projectile_weapon",
+  side_scroller_projectile_weapon: "combat/side_scroller_projectile_weapon",
   zombie: "ai/basic_zombie",
   enemyai: "ai/basic_zombie",
   wave_manager: "systems/wave_manager",

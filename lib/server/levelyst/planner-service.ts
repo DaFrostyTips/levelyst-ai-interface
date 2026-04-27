@@ -20,7 +20,7 @@ const plannerCatalog = {
     environment: "graybox_rooftops",
     coreRequired: ["player/platformer_controller", "camera/side_scroll"] as const,
     gameplayDefaults: ["systems/coin_collectible"] as const,
-    gameplayOptional: ["enemy/basic_enemy", "systems/checkpoint", "systems/coin_collectible"] as const,
+    gameplayOptional: ["combat/side_scroller_projectile_weapon", "enemy/basic_enemy", "systems/checkpoint", "systems/coin_collectible"] as const,
     levelSections: ["intro", "gameplay_loop", "end"] as const,
   },
   "3d_fps": {
@@ -47,6 +47,7 @@ const glossaryByModuleId: Record<string, string> = {
   "player/platformer_controller": "2D player movement with running and jumping.",
   "camera/side_scroll": "2D follow camera for a side-scrolling platformer lane.",
   "enemy/basic_enemy": "Simple 2D patrol enemy for obstacle and collision pressure.",
+  "combat/side_scroller_projectile_weapon": "2D side-view projectile weapon for platformer combat.",
   "systems/checkpoint": "Checkpoint and respawn anchors for retry-friendly platforming.",
   "systems/coin_collectible": "Collectible coin system that creates a score loop.",
   "player/fps_controller": "First-person movement and look controls for 3D shooters.",
@@ -329,6 +330,8 @@ function normalizePlannerOutput(rawPlan: PlannerModelOutput): BlueprintPlan {
 
   return blueprintPlanSchema.parse({
     game_type: parsed.game_type,
+    family_id: parsed.game_type === "3d_fps" ? "3d_fps_survival" : "2d_platformer",
+    capability_ids: [],
     core_systems: coreSystems,
     gameplay_systems: gameplaySystems,
     required_modules: dedupeAndSort([...coreSystems, ...gameplaySystems]),

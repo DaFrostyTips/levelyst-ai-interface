@@ -108,6 +108,10 @@ export function applyPatchOperation(spec: PrototypeSpec, operation: PatchOperati
       return addModuleToEntity(parsedSpec, parsedOperation.entity_id, parsedOperation.module, services)
     case "remove_module":
       return removeModuleFromEntity(parsedSpec, parsedOperation.entity_id, parsedOperation.module, services)
+    case "add_entity":
+      return addEntityToSpec(parsedSpec, parsedOperation.entity, services)
+    case "remove_entity":
+      return removeEntityFromSpec(parsedSpec, parsedOperation.entity_id)
     case "update_module_config":
       return updateEntityModuleConfig(parsedSpec, parsedOperation.entity_id, parsedOperation.module, parsedOperation.changes)
     case "add_system":
@@ -235,6 +239,69 @@ function removeModuleFromEntity(
   return updateEntity(spec, entityId, {
     modules: nextModuleIds,
     module_configs: mergeModuleConfigs(entity.module_configs, nextModuleIds, moduleMap),
+  })
+}
+
+function addEntityToSpec(
+  spec: PrototypeSpec,
+  entity: PrototypeEntity,
+  services: SpecCompilerServices,
+): PrototypeSpec {
+  if (spec.entities.some((candidate) => candidate.id === entity.id)) {
+    throw new Error(`Entity "${entity.id}" already exists in the current spec.`)
+  }
+
+  if (entity.kind === "player" && spec.entities.some((candidate) => candidate.kind === "player")) {
+    throw new Error("Cannot add a second player entity to the current spec.")
+  }
+
+  const rootModuleIds = [...new Set(entity.modules)].sort((left, right) => left.localeCompare(right))
+  const resolution = resolveRequiredModules({
+    required_modules: rootModuleIds,
+    runtime_target: spec.runtime,
+    registry: services.registry,
+  })
+
+  if (!resolution.valid) {
+    throw new Error(`Cannot add entity "${entity.id}": ${formatResolutionErrors(resolution.errors)}`)
+  }
+
+  const disallowedSystemDependencies = resolution.ordered_modules.filter((module) => isSystemModule(module))
+  if (disallowedSystemDependencies.length > 0) {
+    throw new Error(
+      `Cannot add entity "${entity.id}" because it requires global systems: ${disallowedSystemDependencies
+        .map((module) => module.id)
+        .join(", ")}`,
+    )
+  }
+
+  const moduleIds = resolution.ordered_modules.map((module) => module.id)
+  const moduleMap = new Map(resolution.ordered_modules.map((module) => [module.id, module]))
+
+  return prototypeSpecSchema.parse({
+    ...spec,
+    entities: [
+      ...spec.entities,
+      {
+        ...entity,
+        modules: moduleIds,
+        module_configs: mergeModuleConfigs(entity.module_configs, moduleIds, moduleMap),
+      },
+    ],
+  })
+}
+
+function removeEntityFromSpec(spec: PrototypeSpec, entityId: string): PrototypeSpec {
+  const target = findEntity(spec, entityId)
+  const remainingEntities = spec.entities.filter((entity) => entity.id !== entityId)
+
+  if (target.kind === "player" && !remainingEntities.some((entity) => entity.kind === "player")) {
+    throw new Error("Cannot remove the final player entity from the current spec.")
+  }
+
+  return prototypeSpecSchema.parse({
+    ...spec,
+    entities: remainingEntities,
   })
 }
 

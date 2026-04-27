@@ -46,6 +46,10 @@ describe("prompt review service", () => {
     ).toBe("replace")
   })
 
+  it("detects explicit start-over prompts as replacements", () => {
+    expect(detectPromptReviewMode("start over and make an FPS zombie game", basePlatformerBlueprint)).toBe("replace")
+  })
+
   it("builds a patch review blueprint by adding matched platformer systems", async () => {
     const review = await planProjectPromptReview("Add checkpoints", {
       currentBlueprint: basePlatformerBlueprint,
@@ -54,6 +58,26 @@ describe("prompt review service", () => {
     expect(review.mode).toBe("patch")
     expect(review.blueprintPlan.required_modules).toContain("systems/checkpoint")
     expect(review.diagnostics.selected_bundle).toBe("2d_platformer")
+  })
+
+  it("builds a patch review blueprint for adding 2D gun combat to a platformer", async () => {
+    const review = await planProjectPromptReview("Add guns and enemies I can shoot at", {
+      currentBlueprint: {
+        ...basePlatformerBlueprint,
+        gameplay_systems: ["systems/coin_collectible"],
+        required_modules: [
+          "camera/side_scroll",
+          "player/platformer_controller",
+          "systems/coin_collectible",
+        ],
+      },
+    })
+
+    expect(review.mode).toBe("patch")
+    expect(review.blueprintPlan.game_type).toBe("2d_platformer")
+    expect(review.blueprintPlan.core_systems).toContain("combat/side_scroller_projectile_weapon")
+    expect(review.blueprintPlan.required_modules).toContain("enemy/basic_enemy")
+    expect(review.diagnostics.supported_changes).toContain("Add Side Scroller Projectile Weapon to the prototype.")
   })
 
   it("builds a patch review blueprint by removing zombies and dependent waves", async () => {

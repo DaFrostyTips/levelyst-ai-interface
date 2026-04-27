@@ -189,6 +189,8 @@ export function hydrateIntentBlueprint(
   return normalizeBlueprint(
     {
       gameType: blueprintPlan.game_type,
+      familyId: blueprintPlan.family_id,
+      capabilityIds: blueprintPlan.capability_ids ? [...blueprintPlan.capability_ids] : [],
       gameTypeLabel: explanation.gameTypeLabel,
       gameIdea: prompt || "Describe your game idea...",
       playerExperience: explanation.playerExperience,
@@ -215,6 +217,8 @@ export function dehydrateIntentBlueprint(blueprint: IntentBlueprint): BlueprintP
 
   return {
     game_type: blueprint.gameType === "3d_fps" ? "3d_fps" : "2d_platformer",
+    family_id: blueprint.familyId,
+    capability_ids: blueprint.capabilityIds,
     core_systems: coreSystems,
     gameplay_systems: gameplaySystems,
     required_modules: requiredModules,

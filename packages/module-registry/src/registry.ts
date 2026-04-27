@@ -47,7 +47,12 @@ export class ModuleRegistryService {
       .filter((module) => (filters.engine_target ? module.engine_target === filters.engine_target : true))
       .filter((module) => {
         if (!search) return true
-        return module.id.toLowerCase().includes(search) || module.category.toLowerCase().includes(search)
+        return (
+          module.id.toLowerCase().includes(search) ||
+          module.category.toLowerCase().includes(search) ||
+          (module.prompt_aliases ?? []).some((alias) => alias.toLowerCase().includes(search)) ||
+          (module.capabilities ?? []).some((capability) => capability.toLowerCase().includes(search))
+        )
       })
       .sort((left, right) => left.id.localeCompare(right.id))
       .map(cloneModuleDefinition)
@@ -76,6 +81,8 @@ function cloneModuleDefinition(module: ModuleDefinition): ModuleDefinition {
     outputs: [...module.outputs],
     dependencies: [...module.dependencies],
     compatible_with: [...module.compatible_with],
+    capabilities: module.capabilities ? [...module.capabilities] : undefined,
+    prompt_aliases: module.prompt_aliases ? [...module.prompt_aliases] : undefined,
     config_schema: Object.fromEntries(
       Object.entries(module.config_schema).map(([key, value]) => [
         key,

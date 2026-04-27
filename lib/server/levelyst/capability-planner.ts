@@ -3,6 +3,7 @@ import {
   plannerDiagnosticsSchema,
   type BlueprintPlan,
   type GameType,
+  type JsonValue,
   type PatchOperation,
   type PlannerEditCategory,
   type PlannerDiagnostics,
@@ -292,6 +293,12 @@ const termCapabilityWeights: Record<string, CapabilityScoreMap> = {
     "combat.hitscan": 4,
     "movement.first_person": 4,
   },
+  gun: {
+    "combat.projectile": 4,
+  },
+  guns: {
+    "combat.projectile": 4,
+  },
   gunplay: {
     "combat.hitscan": 3,
     "movement.first_person": 1,
@@ -366,6 +373,24 @@ const termCapabilityWeights: Record<string, CapabilityScoreMap> = {
   },
   shooter: {
     "combat.hitscan": 2,
+  },
+  shoot: {
+    "combat.projectile": 4,
+  },
+  shooting: {
+    "combat.projectile": 4,
+  },
+  bullet: {
+    "combat.projectile": 3,
+  },
+  bullets: {
+    "combat.projectile": 3,
+  },
+  weapon: {
+    "combat.projectile": 3,
+  },
+  weapons: {
+    "combat.projectile": 3,
   },
   side: {
     "movement.side_scroll": 1,
@@ -626,6 +651,14 @@ const termMeaningMap: Record<string, string> = {
   quests: "goal-based progression",
   dialogue: "character conversations",
   fps: "first-person shooting",
+  gun: "projectile combat",
+  guns: "projectile combat",
+  shoot: "projectile combat",
+  shooting: "projectile combat",
+  bullet: "projectile combat",
+  bullets: "projectile combat",
+  weapon: "projectile combat",
+  weapons: "projectile combat",
   zombie: "enemy survival pressure",
   zombies: "enemy survival pressure",
   survival: "resource or wave-based survival pressure",
@@ -833,6 +866,7 @@ const moduleCapabilityMap: Record<string, CapabilityId[]> = {
   "player/platformer_controller": ["movement.side_scroll", "physics.gravity"],
   "camera/side_scroll": ["movement.side_scroll"],
   "enemy/basic_enemy": ["ai.enemy_basic"],
+  "combat/side_scroller_projectile_weapon": ["combat.projectile"],
   "systems/checkpoint": ["progression.checkpoint"],
   "systems/coin_collectible": ["interaction.pickup"],
   "player/fps_controller": ["movement.first_person"],
@@ -1027,6 +1061,11 @@ export function translateBundleToBlueprint(
       gameplaySystems.add("systems/coin_collectible")
     }
 
+    if (capabilitySet.has("combat.projectile") || capabilitySet.has("combat.hitscan")) {
+      coreSystems.push("combat/side_scroller_projectile_weapon")
+      gameplaySystems.add("enemy/basic_enemy")
+    }
+
     if (bundleId === "2d_platformer" || capabilitySet.has("progression.checkpoint") || capabilitySet.has("progression.quest")) {
       gameplaySystems.add("systems/checkpoint")
     }
@@ -1046,6 +1085,8 @@ export function translateBundleToBlueprint(
 
     return blueprintPlanSchema.parse({
       game_type: "2d_platformer",
+      family_id: bundle.id,
+      capability_ids: capabilities,
       core_systems: dedupeAndSort(coreSystems),
       gameplay_systems: dedupeAndSort([...gameplaySystems]),
       required_modules: dedupeAndSort([...coreSystems, ...gameplaySystems]),
@@ -1072,6 +1113,8 @@ export function translateBundleToBlueprint(
 
   return blueprintPlanSchema.parse({
     game_type: "3d_fps",
+    family_id: bundle.id,
+    capability_ids: capabilities,
     core_systems: dedupeAndSort(coreSystems),
     gameplay_systems: dedupeAndSort([...gameplaySystems]),
     required_modules: dedupeAndSort([...coreSystems, ...gameplaySystems]),
@@ -1199,7 +1242,14 @@ export function planCapabilityPrompt(
   const blueprintPlan = translateBundleToBlueprint(analysis.selected_bundle, analysis.resolved_capabilities, {
     mode: "replace",
   })
-  const diagnostics = buildPlannerDiagnostics(prompt, blueprintPlan, analysis)
+  const editResolution = resolveFollowUpPatch(prompt, blueprintPlan)
+  const hasPromptAdjustments =
+    editResolution.planned_patch_operations.length > 0 ||
+    editResolution.supported_changes.length > 0 ||
+    editResolution.unsupported_requests.length > 0
+  const diagnostics = buildPlannerDiagnostics(prompt, blueprintPlan, analysis, {
+    editResolution: hasPromptAdjustments ? editResolution : null,
+  })
 
   return {
     blueprintPlan,
@@ -1273,6 +1323,8 @@ function planCapabilityPatchPrompt(
     edit_category:
       supportedChanges.length === 0 && editResolution.unsupported_requests.length > 0
         ? "unsupported_request"
+        : supportedChanges.length > 0 && editResolution.edit_category === "unsupported_request"
+          ? "mechanics_patch"
         : editResolution.edit_category,
     supported_changes: supportedChanges,
   }
@@ -1289,7 +1341,7 @@ function planCapabilityPatchPrompt(
 export function hasPatchCue(prompt: string, type: "add" | "remove") {
   const normalized = normalizePrompt(prompt)
   if (type === "add") {
-    return /\badd\b|\bwith\b|\bmore\b|\bmake the\b|\btune\b|\bfaster\b/.test(normalized)
+    return /\badd\b|\bwith\b|\bmore\b|\bmake\b|\bgive\b|\btune\b|\bfaster\b/.test(normalized)
   }
   return /\bremove\b|\bwithout\b|\bless\b|\bslower\b/.test(normalized)
 }
@@ -1305,7 +1357,7 @@ export function hasDirectEditCue(prompt: string) {
   return (
     hasPatchCue(normalized, "add") ||
     hasPatchCue(normalized, "remove") ||
-    /\bchange\b|\bcolor\b|\bred\b|\bblue\b|\bgreen\b|\byellow\b|\bpurple\b|\bblack\b|\bwhite\b|\borange\b|\bhero\b|\bcharacter\b|\bplayer\b|\benemy\b|\bzombie\b|\bgun\b|\bweapon\b|\bprojectiles?\b|\btracers?\b|\bvisual\b|\blook\b|\btheme\b|\bneon\b|\bcyberpunk\b|\bsunset\b|\bforest\b|\bice\b|\blava\b|\bnight\b|\barcade\b|\bjump\b|\bspeed\b|\breload\b|\bdamage\b|\bmagazine\b|\bcoins?\b|\bcheckpoints?\b|\bzombies?\b|\barena\b|\bmood\b/.test(
+    /\bchange\b|\bcolor\b|\bred\b|\bblue\b|\bgreen\b|\byellow\b|\bpurple\b|\bblack\b|\bwhite\b|\borange\b|\bhero\b|\bcharacter\b|\bplayer\b|\benemy\b|\bzombie\b|\bguns?\b|\bshoot(?:ing)?\b|\bbullets?\b|\bweapon\b|\bprojectiles?\b|\btracers?\b|\bvisual\b|\blook\b|\btheme\b|\bneon\b|\bcyberpunk\b|\bsunset\b|\bforest\b|\bice\b|\blava\b|\bnight\b|\barcade\b|\bjump\b|\bspeed\b|\breload\b|\bdamage\b|\bmagazine\b|\bammo\b|\bhealth\b|\bpickups?\b|\bcoins?\b|\bcheckpoints?\b|\bzombies?\b|\barena\b|\bmood\b|\bspikes?\b|\bhazards?\b|\bmoving platforms?\b|\bplatforms?\b|\bgoal\b|\bfinish\b|\bharder\b|\beasier\b|\btank\b|\bfast\b/.test(
       normalized,
     )
   )
@@ -1329,8 +1381,8 @@ export function decorateDiagnosticsForFamilyReplace(
 
 function resolveFollowUpPatch(prompt: string, currentBlueprint: BlueprintPlan): FollowUpEditResolution {
   const normalized = normalizePrompt(prompt)
-  const modulePatchMap = new Map<string, Record<string, string | number>>()
-  const sceneChanges: Record<string, string | number> = {}
+  const modulePatchMap = new Map<string, Record<string, JsonValue>>()
+  const sceneChanges: Record<string, JsonValue> = {}
   const supportedChanges: string[] = []
   const unsupportedRequests: string[] = []
   const currentSlice = currentBlueprint.game_type
@@ -1374,13 +1426,23 @@ function resolveFollowUpPatch(prompt: string, currentBlueprint: BlueprintPlan): 
       sceneChanges.background_variant = requestedColor
       supportedChanges.push(`Retint the world presentation toward ${requestedColor}.`)
       editCategory = "appearance_patch"
-    } else if (mentionsWeaponTarget(normalized) && currentSlice === "3d_fps") {
-      mergeModulePatch(modulePatchMap, "player_1", "combat/hitscan_weapon", {
-        tracer_color: hex,
-        muzzle_flash_color: lightenHex(hex, 0.28),
-      })
-      supportedChanges.push(`Retint weapon fire feedback to ${requestedColor}.`)
-      editCategory = "appearance_patch"
+    } else if (mentionsWeaponTarget(normalized)) {
+      if (currentSlice === "3d_fps") {
+        mergeModulePatch(modulePatchMap, "player_1", "combat/hitscan_weapon", {
+          tracer_color: hex,
+          muzzle_flash_color: lightenHex(hex, 0.28),
+          weapon_color: darkenHex(hex, 0.24),
+        })
+        supportedChanges.push(`Retint weapon fire feedback to ${requestedColor}.`)
+        editCategory = "appearance_patch"
+      } else {
+        mergeModulePatch(modulePatchMap, "player_1", "combat/side_scroller_projectile_weapon", {
+          projectile_color: hex,
+          muzzle_color: lightenHex(hex, 0.28),
+        })
+        supportedChanges.push(`Retint projectile fire feedback to ${requestedColor}.`)
+        editCategory = "appearance_patch"
+      }
     }
   }
 
@@ -1401,6 +1463,22 @@ function resolveFollowUpPatch(prompt: string, currentBlueprint: BlueprintPlan): 
   }
 
   if (currentSlice === "2d_platformer") {
+    if (/\b(spikes?|hazards?|lava pits?)\b/.test(normalized)) {
+      sceneChanges.hazard_count = /\b(more|many|lots|extra)\b/.test(normalized) ? 5 : 3
+      sceneChanges.hazard_damage = /\b(harder|deadly|dangerous)\b/.test(normalized) ? 2 : 1
+      supportedChanges.push("Add platform hazards that damage and knock back the player.")
+      includesMechanicsChange = true
+    }
+    if (/\bmoving platforms?\b|\bplatforms? move\b|\bmove platforms?\b/.test(normalized)) {
+      sceneChanges.moving_platform_count = /\b(more|many|lots|extra)\b/.test(normalized) ? 3 : 2
+      supportedChanges.push("Add moving platform behavior to the route.")
+      includesMechanicsChange = true
+    }
+    if (/\b(goal|finish|ending|end flag|finish line)\b/.test(normalized)) {
+      sceneChanges.goal_enabled = true
+      supportedChanges.push("Add a readable finish goal to the end of the platformer.")
+      includesMechanicsChange = true
+    }
     if (/\b(higher jump|increase jump|jump higher|jump height)\b/.test(normalized)) {
       mergeModulePatch(modulePatchMap, "player_1", "player/platformer_controller", { jump_force: 14.5 })
       supportedChanges.push("Increase jump height for the platformer hero.")
@@ -1449,6 +1527,44 @@ function resolveFollowUpPatch(prompt: string, currentBlueprint: BlueprintPlan): 
     if (/\b(fewer enemies|less enemies)\b/.test(normalized)) {
       sceneChanges.enemy_count = 1
       supportedChanges.push("Reduce enemy count in the platformer route.")
+      includesMechanicsChange = true
+    }
+    if (/\b(enemy|enemies|monster|monsters)\b/.test(normalized) && /\b(stronger|tougher|more health|higher health|tank)\b/.test(normalized)) {
+      mergeModulePatch(modulePatchMap, "enemy_1", "enemy/basic_enemy", {
+        health: /\btank\b/.test(normalized) ? 6 : 4,
+        variant: /\btank\b/.test(normalized) ? "tank" : "patrol",
+      })
+      supportedChanges.push("Make platformer enemies tougher.")
+      includesMechanicsChange = true
+    }
+    if (/\b(enemy|enemies|monster|monsters)\b/.test(normalized) && /\b(faster|quick|fast)\b/.test(normalized)) {
+      mergeModulePatch(modulePatchMap, "enemy_1", "enemy/basic_enemy", {
+        move_speed: 3.8,
+        variant: "fast",
+      })
+      supportedChanges.push("Speed up platformer enemy patrols.")
+      includesMechanicsChange = true
+    }
+    if (/\b(more health|extra health|healthier|more lives)\b/.test(normalized) && mentionsPlayerTarget(normalized)) {
+      mergeModulePatch(modulePatchMap, "player_1", "player/platformer_controller", { max_health: 5 })
+      supportedChanges.push("Increase platformer player health.")
+      includesMechanicsChange = true
+    }
+    if (/\b(harder|more difficult)\b/.test(normalized)) {
+      sceneChanges.enemy_count = Math.max(toNumericSceneChange(sceneChanges.enemy_count, 2), 3)
+      sceneChanges.hazard_count = Math.max(toNumericSceneChange(sceneChanges.hazard_count, 0), 2)
+      mergeModulePatch(modulePatchMap, "enemy_1", "enemy/basic_enemy", {
+        move_speed: 3.4,
+        contact_damage: 2,
+      })
+      supportedChanges.push("Increase platformer pressure with more danger and stronger contact damage.")
+      includesMechanicsChange = true
+    }
+    if (/\b(easier|less difficult)\b/.test(normalized)) {
+      sceneChanges.enemy_count = 1
+      sceneChanges.hazard_count = 0
+      mergeModulePatch(modulePatchMap, "player_1", "player/platformer_controller", { max_health: 5 })
+      supportedChanges.push("Ease platformer pressure by reducing danger and increasing player health.")
       includesMechanicsChange = true
     }
   }
@@ -1506,6 +1622,60 @@ function resolveFollowUpPatch(prompt: string, currentBlueprint: BlueprintPlan): 
       supportedChanges.push("Slow down player movement speed.")
       includesMechanicsChange = true
     }
+    if (/\b(more health|extra health|more lives|healthier)\b/.test(normalized) && mentionsPlayerTarget(normalized)) {
+      mergeModulePatch(modulePatchMap, "player_1", "player/fps_controller", { max_health: 140 })
+      supportedChanges.push("Increase player health in the arena.")
+      includesMechanicsChange = true
+    }
+    if (/\b(health packs?|health pickups?|medkits?)\b/.test(normalized)) {
+      sceneChanges.health_pickup_count = /\b(more|many|lots|extra)\b/.test(normalized) ? 4 : 2
+      supportedChanges.push("Add health pickups to the arena.")
+      includesMechanicsChange = true
+    }
+    if (/\b(ammo pickups?|more ammo|extra ammo|ammo packs?)\b/.test(normalized)) {
+      sceneChanges.ammo_pickup_count = /\b(more|many|lots|extra)\b/.test(normalized) ? 4 : 2
+      supportedChanges.push("Add ammo pickups to the arena.")
+      includesMechanicsChange = true
+    }
+    if (/\b(zombie|zombies|enemy|enemies)\b/.test(normalized) && /\b(faster|quick|fast)\b/.test(normalized)) {
+      mergeModulePatch(modulePatchMap, "enemy_1", "ai/basic_zombie", {
+        move_speed: 2.35,
+        variant: "fast",
+        health: 42,
+      })
+      supportedChanges.push("Create faster zombie pressure.")
+      includesMechanicsChange = true
+    }
+    if (/\b(zombie|zombies|enemy|enemies)\b/.test(normalized) && /\b(tank|stronger|tougher|more health|higher health)\b/.test(normalized)) {
+      mergeModulePatch(modulePatchMap, "enemy_1", "ai/basic_zombie", {
+        move_speed: 1.05,
+        variant: "tank",
+        health: 140,
+      })
+      supportedChanges.push("Create tougher tank-style zombies.")
+      includesMechanicsChange = true
+    }
+    if (/\b(harder|more difficult)\b/.test(normalized)) {
+      sceneChanges.starting_wave_size_override = Math.max(toNumericSceneChange(sceneChanges.starting_wave_size_override, 5), 7)
+      sceneChanges.wave_growth_override = Math.max(toNumericSceneChange(sceneChanges.wave_growth_override, 2), 3)
+      mergeModulePatch(modulePatchMap, "enemy_1", "ai/basic_zombie", {
+        move_speed: 2,
+        attack_damage: 14,
+      })
+      supportedChanges.push("Increase FPS arena pressure with bigger, stronger waves.")
+      includesMechanicsChange = true
+    }
+    if (/\b(easier|less difficult)\b/.test(normalized)) {
+      sceneChanges.starting_wave_size_override = 3
+      sceneChanges.wave_growth_override = 1
+      sceneChanges.health_pickup_count = Math.max(toNumericSceneChange(sceneChanges.health_pickup_count, 0), 2)
+      mergeModulePatch(modulePatchMap, "enemy_1", "ai/basic_zombie", {
+        move_speed: 1.15,
+        attack_damage: 7,
+      })
+      supportedChanges.push("Ease FPS arena pressure with smaller waves and more recovery.")
+      includesMechanicsChange = true
+    }
   }
 
   if (mentionsExactStyleRequest(normalized)) {
@@ -1529,8 +1699,8 @@ function resolveFollowUpPatch(prompt: string, currentBlueprint: BlueprintPlan): 
 }
 
 function buildPatchOperationsFromMaps(
-  modulePatchMap: Map<string, Record<string, string | number>>,
-  sceneChanges: Record<string, string | number>,
+  modulePatchMap: Map<string, Record<string, JsonValue>>,
+  sceneChanges: Record<string, JsonValue>,
 ) {
   const operations: PatchOperation[] = []
 
@@ -1597,16 +1767,20 @@ function getSuggestedFollowUpPrompts(gameType: GameType, category: PlannerEditCa
 }
 
 function mergeModulePatch(
-  modulePatchMap: Map<string, Record<string, string | number>>,
+  modulePatchMap: Map<string, Record<string, JsonValue>>,
   entityId: string,
   moduleId: string,
-  changes: Record<string, string | number>,
+  changes: Record<string, JsonValue>,
 ) {
   const key = `${entityId}::${moduleId}`
   modulePatchMap.set(key, {
     ...(modulePatchMap.get(key) ?? {}),
     ...changes,
   })
+}
+
+function toNumericSceneChange(value: JsonValue | undefined, fallback: number) {
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback
 }
 
 function detectNamedColor(prompt: string) {
@@ -1805,6 +1979,13 @@ function lightenHex(hex: string, amount: number) {
   const normalized = /^#[0-9a-fA-F]{6}$/.test(hex) ? hex : "#ffffff"
   const channels = [1, 3, 5].map((offset) => parseInt(normalized.slice(offset, offset + 2), 16))
   const adjusted = channels.map((channel) => Math.round(channel + (255 - channel) * amount))
+  return `#${adjusted.map((channel) => channel.toString(16).padStart(2, "0")).join("")}`
+}
+
+function darkenHex(hex: string, amount: number) {
+  const normalized = /^#[0-9a-fA-F]{6}$/.test(hex) ? hex : "#000000"
+  const channels = [1, 3, 5].map((offset) => parseInt(normalized.slice(offset, offset + 2), 16))
+  const adjusted = channels.map((channel) => Math.round(channel * (1 - amount)))
   return `#${adjusted.map((channel) => channel.toString(16).padStart(2, "0")).join("")}`
 }
 

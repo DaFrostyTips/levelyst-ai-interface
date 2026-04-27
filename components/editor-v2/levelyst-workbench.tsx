@@ -120,7 +120,6 @@ import {
   getProject,
   getProjectSpec,
   patchProjectSpec,
-  resetKioskSession,
   streamGenerationEvents,
   submitPrompt,
   updateBlueprint,
@@ -154,6 +153,12 @@ import {
   LEVELYST_PUBLIC_SESSION_MESSAGE,
   type LevelystDeployMode,
 } from "@/lib/levelyst/deploy-mode"
+import {
+  createPresentationSyncMessage,
+  KIOSK_IDLE_RESET_MS,
+  PRESENTATION_CHANNEL_NAME,
+  type PresentationSyncReason,
+} from "@/lib/levelyst/presentation-sync"
 import { cn } from "@/lib/utils"
 import type { CopilotLocalAiStatus } from "@/lib/levelyst/local-ai-status"
 
@@ -205,6 +210,7 @@ const moduleIconMap: Record<EditorModuleIconKey, ModuleTemplate["icon"]> = {
   basic_enemy: Brain,
   checkpoint: Shield,
   coin: Sparkles,
+  side_scroller_projectile_weapon: Swords,
   fps_controller: Footprints,
   hitscan_weapon: Crosshair,
   basic_zombie: Brain,
@@ -284,6 +290,7 @@ const promptChips = [
 ]
 
 const platformerFollowUpChips = [
+  "Add guns and enemies I can shoot at",
   "Make the hero red",
   "Make the world neon",
   "Increase jump height",
@@ -377,6 +384,7 @@ export function LevelystWorkbench({
   const [simulationError, setSimulationError] = useState<string | null>(null)
   const [pendingProjectMode, setPendingProjectMode] = useState<EditorMode | null>(null)
   const [hasMounted, setHasMounted] = useState(false)
+  const [showKioskAttractOverlay, setShowKioskAttractOverlay] = useState(false)
 
   const editorSurfaceRef = useRef<HTMLDivElement>(null)
   const zLayerRef = useRef(40)
@@ -385,6 +393,7 @@ export function LevelystWorkbench({
   const generationSourceRef = useRef<EventSource | null>(null)
   const presentationWindowRef = useRef<Window | null>(null)
   const presentationChannelRef = useRef<BroadcastChannel | null>(null)
+  const kioskIdleTimerRef = useRef<number | null>(null)
   const workspacePersistTimerRef = useRef<number | null>(null)
   const lastPersistedWorkspaceRef = useRef("")
   const isReplayingGenerationRef = useRef(false)
@@ -421,7 +430,7 @@ export function LevelystWorkbench({
   useEffect(() => {
     if (typeof window === "undefined" || typeof BroadcastChannel === "undefined") return
 
-    const channel = new BroadcastChannel("levelyst-presentation")
+    const channel = new BroadcastChannel(PRESENTATION_CHANNEL_NAME)
     presentationChannelRef.current = channel
 
     return () => {
@@ -453,6 +462,9 @@ export function LevelystWorkbench({
       transitionTimersRef.current.forEach((timer) => window.clearTimeout(timer))
       if (workspacePersistTimerRef.current !== null) {
         window.clearTimeout(workspacePersistTimerRef.current)
+      }
+      if (kioskIdleTimerRef.current !== null) {
+        window.clearTimeout(kioskIdleTimerRef.current)
       }
       generationSourceRef.current?.close()
       if (presentationWindowRef.current && !presentationWindowRef.current.closed) {
@@ -557,19 +569,58 @@ export function LevelystWorkbench({
     [activeProjectId, projects],
   )
 
+  const broadcastPresentationState = useCallback(
+    (input: Parameters<typeof createPresentationSyncMessage>[0]) => {
+      presentationChannelRef.current?.postMessage(createPresentationSyncMessage(input))
+    },
+    [],
+  )
+
+  const broadcastPresentationHome = useCallback(
+    (reason: PresentationSyncReason = "dashboard") => {
+      broadcastPresentationState({
+        state: "home",
+        reason,
+      })
+    },
+    [broadcastPresentationState],
+  )
+
+  const broadcastPresentationProject = useCallback(
+    (
+      project: { id: string; name: string; prototypeSpec?: PrototypeSpec | null; prototype_spec?: PrototypeSpec | null },
+      reason: PresentationSyncReason = "project_opened",
+    ) => {
+      broadcastPresentationState({
+        state: "project",
+        projectId: project.id,
+        projectName: project.name,
+        hasPrototype: Boolean(project.prototypeSpec ?? project.prototype_spec),
+        reason,
+      })
+    },
+    [broadcastPresentationState],
+  )
+
   useEffect(() => {
     if (typeof window === "undefined") return
-    if (!activeProject) return
 
-    presentationChannelRef.current?.postMessage({
-      type: "presentation-sync",
-      projectId: activeProject.id,
-      projectName: activeProject.name,
-      hasPrototype: Boolean(activeProject.prototypeSpec),
-      mode: editorMode,
-      timestamp: Date.now(),
-    })
-  }, [activeProject, editorMode])
+    if (view === "dashboard") {
+      broadcastPresentationHome("dashboard")
+      return
+    }
+
+    if (activeProject) {
+      broadcastPresentationProject(activeProject, "project_opened")
+    }
+  }, [
+    activeProject?.id,
+    activeProject?.name,
+    activeProject?.prototypeSpec,
+    broadcastPresentationHome,
+    broadcastPresentationProject,
+    view,
+  ])
 
   const upsertProjectDetail = useCallback(
     (
@@ -730,86 +781,62 @@ export function LevelystWorkbench({
     }
   }, [activeProjectId, buildWorkspaceSnapshot, isReadOnlyDemo])
 
+  const resetKioskToDashboard = useCallback(() => {
+    transitionTimersRef.current.forEach((timer) => window.clearTimeout(timer))
+    transitionTimersRef.current = []
+
+    if (!isReplayingGenerationRef.current) {
+      generationSourceRef.current?.close()
+      generationSourceRef.current = null
+    }
+
+    setView("dashboard")
+    setEditorMode("build")
+    setSimulatePhase("idle")
+    setPendingProjectMode(null)
+    setPrompt("")
+    setHubPrompt("")
+    setHubGenerating(false)
+    setWorkspacePendingBlueprint(null)
+    setWorkspacePendingPromptMode(null)
+    setWorkspaceBlueprintState("idle")
+    setHubPendingBlueprint(null)
+    setHubBlueprintState("idle")
+    setBlueprintEntryPoint(null)
+    setSimulationError(null)
+    setShowKioskAttractOverlay(false)
+    setShowCommandPalette(false)
+    setShowCommunityModal(false)
+    setShowLibrarySheet(false)
+    setShowCopilotSheet(false)
+    setShowTimelineSheet(false)
+    broadcastPresentationHome("idle_reset")
+  }, [broadcastPresentationHome])
+
+  const markKioskActivity = useCallback(() => {
+    if (!isKioskExperience || typeof window === "undefined") return
+
+    if (kioskIdleTimerRef.current !== null) {
+      window.clearTimeout(kioskIdleTimerRef.current)
+    }
+    setShowKioskAttractOverlay(false)
+
+    kioskIdleTimerRef.current = window.setTimeout(() => {
+      if (isReplayingGenerationRef.current || hubBlueprintState === "generating" || workspaceBlueprintState === "generating") {
+        markKioskActivity()
+        return
+      }
+      kioskIdleTimerRef.current = null
+      resetKioskToDashboard()
+    }, KIOSK_IDLE_RESET_MS)
+  }, [hubBlueprintState, isKioskExperience, resetKioskToDashboard, workspaceBlueprintState])
+
   useEffect(() => {
     if (!isKioskExperience) return
 
-    let idleTimer: number | null = null
-    let resetting = false
+    const handleActivity = () => markKioskActivity()
 
-    const createResetViewport = () => {
-      const bounds = editorSurfaceRef.current?.getBoundingClientRect()
-      if (!bounds) {
-        return {
-          x: LEGACY_VIEWPORT_X,
-          y: LEGACY_VIEWPORT_Y,
-          scale: 1,
-          isPanning: false,
-        }
-      }
-
-      return createCenteredCanvasViewport(bounds.width, bounds.height, 1)
-    }
-
-    const scheduleReset = () => {
-      if (idleTimer !== null) {
-        window.clearTimeout(idleTimer)
-      }
-
-      idleTimer = window.setTimeout(() => {
-        if (resetting) return
-        resetting = true
-
-        void resetKioskSession()
-          .then(({ project }) => {
-            const record = hydrateProjectRecord(project)
-            if (project.prototype_spec) {
-              compiledWorkspaceSignaturesRef.current[record.id] = createCompileSignature(record.workspace)
-            } else {
-              delete compiledWorkspaceSignaturesRef.current[record.id]
-            }
-
-            activeProjectLoadedRef.current = null
-            lastPersistedWorkspaceRef.current = JSON.stringify(dehydrateWorkspace(record.workspace))
-            setProjects([record])
-            setActiveProjectId(record.id)
-            setView("editor")
-            setEditorMode("build")
-            setSimulatePhase("idle")
-            setPendingProjectMode(null)
-            setSimulationError(null)
-            setSelectedNodeId(null)
-            setSelectedNodeIds([])
-            setHoveredNodeId(null)
-            setProjectDeleteTarget(null)
-            setWorkspacePendingBlueprint(null)
-            setWorkspacePendingPromptMode(null)
-            setWorkspaceBlueprintState("idle")
-            setHubPendingBlueprint(null)
-            setHubBlueprintState("idle")
-            setBlueprintEntryPoint(null)
-            setHubPrompt("")
-            setPrompt("")
-            setPlanningSteps([])
-            setPlanningProfile("presentation")
-            setLeftRailTab("prompt")
-            setMobileWorkspace("canvas")
-            setTimelineTab("timeline")
-            setTimelineDockCollapsed(false)
-            setCanvasViewport(createResetViewport())
-          })
-          .catch((error) => {
-            setSimulationError(error instanceof Error ? error.message : "Kiosk reset failed.")
-          })
-          .finally(() => {
-            resetting = false
-            scheduleReset()
-          })
-      }, 3 * 60 * 1000)
-    }
-
-    const handleActivity = () => scheduleReset()
-
-    scheduleReset()
+    markKioskActivity()
     window.addEventListener("pointerdown", handleActivity)
     window.addEventListener("pointermove", handleActivity)
     window.addEventListener("keydown", handleActivity)
@@ -817,8 +844,9 @@ export function LevelystWorkbench({
     window.addEventListener("wheel", handleActivity)
 
     return () => {
-      if (idleTimer !== null) {
-        window.clearTimeout(idleTimer)
+      if (kioskIdleTimerRef.current !== null) {
+        window.clearTimeout(kioskIdleTimerRef.current)
+        kioskIdleTimerRef.current = null
       }
       window.removeEventListener("pointerdown", handleActivity)
       window.removeEventListener("pointermove", handleActivity)
@@ -826,7 +854,7 @@ export function LevelystWorkbench({
       window.removeEventListener("touchstart", handleActivity)
       window.removeEventListener("wheel", handleActivity)
     }
-  }, [isKioskExperience])
+  }, [isKioskExperience, markKioskActivity])
 
   useEffect(() => {
     if (!activeProjectId) return
@@ -1082,6 +1110,10 @@ export function LevelystWorkbench({
   const runGraphBuildFromBlueprint = useCallback(
     async (blueprint: IntentBlueprint, options: { clearWorkspace: boolean }) => {
       if (!activeProjectId) return false
+      markKioskActivity()
+      if (activeProject) {
+        broadcastPresentationProject(activeProject, "generation_started")
+      }
 
       const blueprintPlan = dehydrateIntentBlueprint(blueprint)
       if (blueprintPlan.required_modules.length === 0) return false
@@ -1164,6 +1196,8 @@ export function LevelystWorkbench({
                 reloadWorkspace: true,
                 resetEdges: true,
               })
+              broadcastPresentationProject(centeredProject, "generation_completed")
+              markKioskActivity()
               setPrompt("")
               shouldCenterGeneratedReplayRef.current = false
               generationReplayOffsetRef.current = null
@@ -1236,7 +1270,16 @@ export function LevelystWorkbench({
         return false
       }
     },
-    [activeProjectId, buildWorkspaceSnapshot, getCenteredViewport, restoreWorkspaceSnapshot, upsertProjectDetail],
+    [
+      activeProject,
+      activeProjectId,
+      broadcastPresentationProject,
+      buildWorkspaceSnapshot,
+      getCenteredViewport,
+      markKioskActivity,
+      restoreWorkspaceSnapshot,
+      upsertProjectDetail,
+    ],
   )
 
   const prepareBlueprint = useCallback(
@@ -1248,6 +1291,7 @@ export function LevelystWorkbench({
 
       const trimmed = rawPrompt.trim()
       if (!trimmed) return false
+      markKioskActivity()
       setBlueprintEntryPoint(source)
       setSimulationError(null)
       setPlanningSteps([])
@@ -1277,6 +1321,7 @@ export function LevelystWorkbench({
           planning_profile: planningProfile,
         })
         upsertProjectDetail(project)
+        broadcastPresentationProject(project, "prompt_submitted")
 
         const previewBlueprint = project.workspace_json.pending_blueprint ?? project.blueprint_json
         const blueprint = previewBlueprint
@@ -1327,7 +1372,15 @@ export function LevelystWorkbench({
         return false
       }
     },
-    [activeProjectId, isReadOnlyDemo, planningProfile, showReadOnlyDemoNotice, upsertProjectDetail],
+    [
+      activeProjectId,
+      broadcastPresentationProject,
+      isReadOnlyDemo,
+      markKioskActivity,
+      planningProfile,
+      showReadOnlyDemoNotice,
+      upsertProjectDetail,
+    ],
   )
 
   const cacheProjectArtifacts = useCallback(
@@ -1389,6 +1442,7 @@ export function LevelystWorkbench({
   )
 
   const handleBlueprintCancel = useCallback(() => {
+    markKioskActivity()
     const projectId = activeProjectId
     if (blueprintEntryPoint === "hub") {
       setHubPendingBlueprint(null)
@@ -1424,9 +1478,10 @@ export function LevelystWorkbench({
     void updateWorkspace(projectId, dehydrated).catch(() => {
       // preserve local cancel even if the backend update fails
     })
-  }, [activeProjectId, blueprintEntryPoint, buildWorkspaceSnapshot, isReadOnlyDemo, projects])
+  }, [activeProjectId, blueprintEntryPoint, buildWorkspaceSnapshot, isReadOnlyDemo, markKioskActivity, projects])
 
   const handleBlueprintGenerate = useCallback(async () => {
+    markKioskActivity()
     if (isReadOnlyDemo) {
       showReadOnlyDemoNotice()
       return
@@ -1470,6 +1525,7 @@ export function LevelystWorkbench({
     blueprintEntryPoint,
     hubPendingBlueprint,
     isReadOnlyDemo,
+    markKioskActivity,
     runGraphBuildFromBlueprint,
     showReadOnlyDemoNotice,
     workspacePendingPromptMode,
@@ -1559,6 +1615,11 @@ export function LevelystWorkbench({
 
   const handleModeChange = useCallback(
     async (mode: EditorMode) => {
+      markKioskActivity()
+      if (activeProject) {
+        broadcastPresentationProject(activeProject, "project_opened")
+      }
+
       if (mode !== "simulate") {
         transitionTimersRef.current.forEach((timer) => window.clearTimeout(timer))
         transitionTimersRef.current = []
@@ -1646,7 +1707,7 @@ export function LevelystWorkbench({
         setSimulationError(error instanceof Error ? error.message : "Simulation failed to prepare.")
       }
     },
-    [activeProject, cacheProjectArtifacts, startSimulationTransition, upsertProjectDetail],
+    [activeProject, broadcastPresentationProject, cacheProjectArtifacts, markKioskActivity, startSimulationTransition, upsertProjectDetail],
   )
 
   useEffect(() => {
@@ -1711,6 +1772,7 @@ export function LevelystWorkbench({
 
   const openProject = useCallback(
     async (projectId: string, mode: EditorMode = "build") => {
+      markKioskActivity()
       try {
         const { project } = await getProject(projectId)
         let projectDetail = project
@@ -1736,14 +1798,16 @@ export function LevelystWorkbench({
         setSimulationError(null)
         setPendingProjectMode(mode === "simulate" ? "simulate" : null)
         setEditorMode(mode === "simulate" ? "build" : mode)
+        broadcastPresentationProject(projectDetail, "project_opened")
       } catch (error) {
         setSimulationError(error instanceof Error ? error.message : "Project failed to load.")
       }
     },
-    [upsertProjectDetail],
+    [broadcastPresentationProject, markKioskActivity, upsertProjectDetail],
   )
 
   const createNewProject = useCallback(async () => {
+    markKioskActivity()
     if (isReadOnlyDemo) {
       showReadOnlyDemoNotice()
       return
@@ -1763,13 +1827,39 @@ export function LevelystWorkbench({
       setPendingProjectMode(null)
       setEditorMode("build")
       setCanvasViewport(getCenteredViewport(1))
+      broadcastPresentationProject(project, "project_opened")
     } catch (error) {
       setSimulationError(error instanceof Error ? error.message : "Project creation failed.")
     }
-  }, [getCenteredViewport, isReadOnlyDemo, projects.length, showReadOnlyDemoNotice, upsertProjectDetail])
+  }, [
+    broadcastPresentationProject,
+    getCenteredViewport,
+    isReadOnlyDemo,
+    markKioskActivity,
+    projects.length,
+    showReadOnlyDemoNotice,
+    upsertProjectDetail,
+  ])
+
+  const handleKioskContinue = useCallback(() => {
+    markKioskActivity()
+    setShowKioskAttractOverlay(false)
+    if (activeProjectId) {
+      setView("editor")
+    }
+  }, [activeProjectId, markKioskActivity])
+
+  const handleKioskStartNewGame = useCallback(async () => {
+    markKioskActivity()
+    setShowKioskAttractOverlay(false)
+    setPrompt("")
+    setHubPrompt("")
+    await createNewProject()
+  }, [createNewProject, markKioskActivity])
 
   const openPresentationScreen = useCallback(
     async (projectId?: string) => {
+      markKioskActivity()
       const targetProjectId = projectId ?? activeProject?.id
       if (!targetProjectId) {
         setSimulationError("Select a project before opening the presentation screen.")
@@ -1796,14 +1886,7 @@ export function LevelystWorkbench({
           resetEdges: targetProjectId === activeProject?.id,
         })
 
-        presentationChannelRef.current?.postMessage({
-          type: "presentation-sync",
-          projectId: targetProjectId,
-          projectName: hydratedProject.name,
-          hasPrototype: Boolean(hydratedProject.prototype_spec),
-          mode: editorMode,
-          timestamp: Date.now(),
-        })
+        broadcastPresentationProject(hydratedProject, "manual_present")
 
         const presentationWindow = window.open(
           `/present/${targetProjectId}/`,
@@ -1815,11 +1898,22 @@ export function LevelystWorkbench({
           presentationWindowRef.current = presentationWindow
           setPlanningProfile("presentation")
         }
+
+        if (view === "dashboard") {
+          window.setTimeout(() => broadcastPresentationHome("dashboard"), 120)
+        }
       } catch (error) {
         setSimulationError(error instanceof Error ? error.message : "Presentation screen failed to open.")
       }
     },
-    [activeProject?.id, editorMode, upsertProjectDetail],
+    [
+      activeProject?.id,
+      broadcastPresentationHome,
+      broadcastPresentationProject,
+      markKioskActivity,
+      upsertProjectDetail,
+      view,
+    ],
   )
 
   const duplicateProject = useCallback(
@@ -2258,6 +2352,29 @@ export function LevelystWorkbench({
       .filter((entry) => entry.items.length > 0)
   }, [commandActions])
 
+  const kioskAttractOverlay =
+    isKioskExperience && showKioskAttractOverlay ? (
+      <div className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-950/72 px-6 backdrop-blur-md">
+        <div className="lv-glass-modal w-full max-w-xl rounded-3xl border border-cyan-300/30 p-6 text-center text-white shadow-[0_28px_80px_rgba(0,0,0,0.5)]">
+          <p className="text-xs uppercase tracking-[0.22em] text-cyan-100/72">Levelyst Grad Show</p>
+          <h2 className="mt-3 font-display text-3xl">Continue building this game?</h2>
+          <p className="mt-3 text-sm leading-6 text-cyan-50/78">
+            The last player left a playable prototype here. Keep remixing it, or start a fresh prompt.
+          </p>
+          <div className="mt-6 grid gap-3 sm:grid-cols-2">
+            <Button onClick={handleKioskContinue} className="bg-cyan-300 text-slate-950 hover:bg-cyan-200">
+              <PlayCircle className="mr-2 h-4 w-4" />
+              Continue This Game
+            </Button>
+            <Button onClick={() => void handleKioskStartNewGame()} variant="outline" className="lv-chrome-control text-white">
+              <Wand2 className="mr-2 h-4 w-4" />
+              Start New Game
+            </Button>
+          </div>
+        </div>
+      </div>
+    ) : null
+
   if (view === "dashboard") {
     return (
       <TooltipProvider delayDuration={180}>
@@ -2539,6 +2656,7 @@ export function LevelystWorkbench({
             </CommandList>
           </CommandDialog>
         </div>
+        {kioskAttractOverlay}
       </TooltipProvider>
     )
   }
@@ -2555,7 +2673,14 @@ export function LevelystWorkbench({
           motionIntensity={effectiveMotionIntensity}
           readiness={readiness}
           layoutMode={layoutMode}
-          onDashboard={() => setView("dashboard")}
+          onDashboard={() => {
+            markKioskActivity()
+            setView("dashboard")
+            setEditorMode("build")
+            setSimulatePhase("idle")
+            setPendingProjectMode(null)
+            broadcastPresentationHome("dashboard")
+          }}
           onOpenHelp={() => {
             setShowHelpOverlay(true)
             setUiPreferences((prev) => ({ ...prev, helpOverlayDismissed: false }))
@@ -2662,6 +2787,11 @@ export function LevelystWorkbench({
                         active={editorMode === "simulate"}
                         spec={activePrototypeSpec}
                         onRuntimeError={handleRuntimeError}
+                        promptValue={prompt}
+                        onPromptChange={setPrompt}
+                        onPromptSubmit={handlePromptSubmit}
+                        promptDisabled={activeBlueprintState !== "idle"}
+                        readOnly={isReadOnlyDemo}
                       />
                     }
                     onOpenLibrary={() => {
@@ -2760,6 +2890,11 @@ export function LevelystWorkbench({
                         active={editorMode === "simulate"}
                         spec={activePrototypeSpec}
                         onRuntimeError={handleRuntimeError}
+                        promptValue={prompt}
+                        onPromptChange={setPrompt}
+                        onPromptSubmit={handlePromptSubmit}
+                        promptDisabled={activeBlueprintState !== "idle"}
+                        readOnly={isReadOnlyDemo}
                       />
                     }
                     onOpenLibrary={handleOpenLibrary}
@@ -2916,6 +3051,7 @@ export function LevelystWorkbench({
 
         <OnboardingCoachmarks open={shouldShowCoachmarks} onDismiss={handleDismissCoachmarks} />
       </div>
+      {kioskAttractOverlay}
     </TooltipProvider>
   )
 }

@@ -10,6 +10,8 @@ export const blueprintConstraintsSchema = z
 export const blueprintPlanSchema = z
   .object({
     game_type: gameTypeSchema,
+    family_id: z.string().min(1).optional(),
+    capability_ids: z.array(z.string().min(1)).optional(),
     core_systems: z.array(z.string().min(1)).min(1),
     gameplay_systems: z.array(z.string().min(1)),
     required_modules: z.array(z.string().min(1)).min(1),

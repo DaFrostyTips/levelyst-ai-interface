@@ -84,12 +84,65 @@ function deriveBlueprintFromSpec(currentBlueprint: NonNullable<ProjectDetail["bl
 
   return {
     ...currentBlueprint,
+    family_id: currentBlueprint.family_id ?? (prototypeSpec.runtime === "web_3d" ? "3d_fps_survival" : "2d_platformer"),
+    capability_ids: deriveCapabilityIds(requiredModules, prototypeSpec.runtime),
     core_systems: coreSystems,
     gameplay_systems: gameplaySystems,
     required_modules: requiredModules,
     environment: prototypeSpec.scene.environment,
     level_structure: [...prototypeSpec.scene.level_structure],
   }
+}
+
+function deriveCapabilityIds(requiredModules: string[], runtime: "web_2d" | "web_3d") {
+  const capabilities = new Set<string>()
+
+  requiredModules.forEach((moduleId) => {
+    switch (moduleId) {
+      case "player/platformer_controller":
+        capabilities.add("movement.side_scroll")
+        capabilities.add("physics.gravity")
+        break
+      case "camera/side_scroll":
+        capabilities.add("movement.side_scroll")
+        break
+      case "combat/side_scroller_projectile_weapon":
+        capabilities.add("combat.projectile")
+        break
+      case "enemy/basic_enemy":
+      case "ai/basic_zombie":
+        capabilities.add("ai.enemy_basic")
+        break
+      case "systems/checkpoint":
+        capabilities.add("progression.checkpoint")
+        break
+      case "systems/coin_collectible":
+        capabilities.add("interaction.pickup")
+        break
+      case "player/fps_controller":
+        capabilities.add("movement.first_person")
+        break
+      case "combat/hitscan_weapon":
+        capabilities.add("combat.hitscan")
+        break
+      case "systems/wave_manager":
+        capabilities.add("progression.wave")
+        capabilities.add("systems.wave_spawner")
+        break
+      default:
+        break
+    }
+  })
+
+  if (runtime === "web_2d") {
+    capabilities.add("movement.side_scroll")
+    capabilities.add("physics.gravity")
+  } else {
+    capabilities.add("movement.first_person")
+    capabilities.add("combat.hitscan")
+  }
+
+  return [...capabilities].sort((left, right) => left.localeCompare(right))
 }
 
 function applyLayoutOperations(

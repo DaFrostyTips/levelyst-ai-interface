@@ -1,5 +1,4 @@
-import { notFound } from "next/navigation"
-import { PresentationScreen } from "@/components/editor-v2/presentation-screen"
+import { PresentationAttractScreen, PresentationScreen } from "@/components/editor-v2/presentation-screen"
 import { getLevelystRepository } from "@/lib/server/levelyst/project-repository"
 import { getLevelystRequestContextForServerComponent } from "@/lib/server/levelyst/request-context"
 
@@ -16,7 +15,7 @@ export default async function PresentationPage({
   const project = await repository.getProjectDetail(projectId)
 
   if (!project) {
-    notFound()
+    return <PresentationAttractScreen status="Waiting for the active project from the main screen." />
   }
 
   return <PresentationScreen initialProject={project} />

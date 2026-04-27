@@ -3,8 +3,19 @@ import { ModuleRegistryService, createSeededModuleRegistry, seedModuleDefinition
 
 describe("@levelyst/module-registry", () => {
   it("loads the seeded module library", () => {
-    expect(seedModuleDefinitions).toHaveLength(11)
+    expect(seedModuleDefinitions).toHaveLength(12)
     expect(seedModuleDefinitions.some((module) => module.id === "player/platformer_controller")).toBe(true)
+  })
+
+  it("finds modules by prompt aliases and capability metadata", () => {
+    const registry = createSeededModuleRegistry()
+
+    expect(registry.listModules({ search: "shoot" }).map((module) => module.id)).toContain(
+      "combat/side_scroller_projectile_weapon",
+    )
+    expect(registry.listModules({ search: "combat.projectile" }).map((module) => module.id)).toContain(
+      "combat/side_scroller_projectile_weapon",
+    )
   })
 
   it("lists modules with deterministic filtering", () => {
@@ -42,6 +53,19 @@ describe("@levelyst/module-registry", () => {
       { from: "camera/side_scroll", to: "player/platformer_controller", kind: "requires" },
       { from: "player/platformer_controller", to: "physics/gravity", kind: "requires" },
       { from: "systems/checkpoint", to: "player/platformer_controller", kind: "requires" },
+    ])
+  })
+
+  it("resolves side-scroller combat through the platformer controller", () => {
+    const registry = createSeededModuleRegistry()
+    const result = registry.resolveModuleDependencies(["combat/side_scroller_projectile_weapon", "enemy/basic_enemy"])
+
+    expect(result.valid).toBe(true)
+    expect(result.resolved).toEqual([
+      "physics/gravity",
+      "player/platformer_controller",
+      "combat/side_scroller_projectile_weapon",
+      "enemy/basic_enemy",
     ])
   })
 

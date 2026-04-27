@@ -1,5 +1,6 @@
 import { z } from "zod"
 import { jsonObjectSchema, moduleIdSchema, positionSchema, resourceIdSchema } from "../primitives"
+import { prototypeEntitySchema } from "./prototype-spec"
 
 const updateModuleConfigOperationSchema = z
   .object({
@@ -24,6 +25,20 @@ const removeModuleOperationSchema = z
     op: z.literal("remove_module"),
     entity_id: resourceIdSchema,
     module: moduleIdSchema,
+  })
+  .strict()
+
+const addEntityOperationSchema = z
+  .object({
+    op: z.literal("add_entity"),
+    entity: prototypeEntitySchema,
+  })
+  .strict()
+
+const removeEntityOperationSchema = z
+  .object({
+    op: z.literal("remove_entity"),
+    entity_id: resourceIdSchema,
   })
   .strict()
 
@@ -75,6 +90,8 @@ export const patchOperationSchema = z.discriminatedUnion("op", [
   updateModuleConfigOperationSchema,
   addModuleOperationSchema,
   removeModuleOperationSchema,
+  addEntityOperationSchema,
+  removeEntityOperationSchema,
   addSystemOperationSchema,
   removeSystemOperationSchema,
   reorderLevelStructureOperationSchema,

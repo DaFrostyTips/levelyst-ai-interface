@@ -5,6 +5,7 @@ export interface RuntimeInputState {
   left: boolean
   right: boolean
   jump: boolean
+  fire: boolean
 }
 
 export interface RuntimeActorSnapshot {
@@ -19,6 +20,16 @@ export interface RuntimeActorSnapshot {
   grounded: boolean
   active: boolean
   modules: string[]
+  health?: number
+  max_health?: number
+}
+
+export interface RuntimeProjectileSnapshot {
+  id: string
+  x: number
+  y: number
+  vx: number
+  active: boolean
 }
 
 export interface RuntimeCoinSnapshot {
@@ -33,6 +44,32 @@ export interface RuntimeCheckpointSnapshot {
   x: number
   y: number
   active: boolean
+}
+
+export interface RuntimePlatformSnapshot {
+  id: string
+  x: number
+  y: number
+  width: number
+  height: number
+  moving: boolean
+}
+
+export interface RuntimeHazardSnapshot {
+  id: string
+  x: number
+  y: number
+  width: number
+  height: number
+  active: boolean
+}
+
+export interface RuntimeGoalSnapshot {
+  id: string
+  x: number
+  y: number
+  active: boolean
+  reached: boolean
 }
 
 export interface RuntimeSnapshot {
@@ -51,8 +88,12 @@ export interface RuntimeSnapshot {
       height: number
     }
   }
+  platforms: RuntimePlatformSnapshot[]
   player: RuntimeActorSnapshot | null
   enemies: RuntimeActorSnapshot[]
+  projectiles: RuntimeProjectileSnapshot[]
+  hazards: RuntimeHazardSnapshot[]
+  goal: RuntimeGoalSnapshot | null
   coins: RuntimeCoinSnapshot[]
   checkpoints: RuntimeCheckpointSnapshot[]
   score: number
@@ -63,6 +104,10 @@ export interface RuntimeSnapshot {
 export type RuntimeWeb2DEvent =
   | { type: "runtime_started" }
   | { type: "runtime_stopped" }
+  | { type: "weapon_fired"; projectile_id: string }
+  | { type: "enemy_defeated"; enemy_id: string }
+  | { type: "player_damaged"; health: number; source: "enemy" | "hazard" }
+  | { type: "goal_reached"; goal_id: string }
   | { type: "coin_collected"; coin_id: string; score: number }
   | { type: "checkpoint_activated"; checkpoint_id: string }
   | { type: "player_respawned"; checkpoint_id: string | null }

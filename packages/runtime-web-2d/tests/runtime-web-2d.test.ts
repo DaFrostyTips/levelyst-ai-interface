@@ -5,19 +5,25 @@ import { PrototypeSpecCompiler } from "@levelyst/spec-compiler"
 import type { GamepadNavigatorLike } from "@levelyst/runtime-input"
 import { createRuntimeWeb2D, getScenePreset } from "../src"
 
-function compilePlatformerSpec() {
+function compilePlatformerSpec(extraRequiredModules: string[] = []) {
   const registry = createSeededModuleRegistry()
+  const requiredModules = [
+    "player/platformer_controller",
+    "camera/side_scroll",
+    "enemy/basic_enemy",
+    "systems/checkpoint",
+    "systems/coin_collectible",
+    ...extraRequiredModules,
+  ]
   const blueprint = {
     game_type: "2d_platformer" as const,
-    core_systems: ["player/platformer_controller", "camera/side_scroll"],
-    gameplay_systems: ["enemy/basic_enemy", "systems/checkpoint", "systems/coin_collectible"],
-    required_modules: [
+    core_systems: [
       "player/platformer_controller",
       "camera/side_scroll",
-      "enemy/basic_enemy",
-      "systems/checkpoint",
-      "systems/coin_collectible",
+      ...extraRequiredModules.filter((moduleId) => moduleId.startsWith("combat/")),
     ],
+    gameplay_systems: ["enemy/basic_enemy", "systems/checkpoint", "systems/coin_collectible"],
+    required_modules: requiredModules,
     environment: "graybox_rooftops",
     level_structure: ["intro", "gameplay_loop", "end"],
     constraints: {
@@ -142,6 +148,119 @@ describe("@levelyst/runtime-web-2d", () => {
 
     expect(snapshot.enemies).toHaveLength(3)
     expect(snapshot.player?.id).toBe("player_1")
+  })
+
+  it("supports hazards, moving platforms, health damage, and finish goals", () => {
+    const hazardSpec = compilePlatformerSpec()
+    hazardSpec.scene.parameters = {
+      ...hazardSpec.scene.parameters,
+      hazard_count: 1,
+      hazard_damage: 1,
+      moving_platform_count: 2,
+      goal_enabled: true,
+    }
+    hazardSpec.entities = hazardSpec.entities.map((entity) =>
+      entity.id === "player_1"
+        ? {
+            ...entity,
+            position: { x: 194, y: 810 },
+          }
+        : entity,
+    )
+
+    const hazardEvents: string[] = []
+    const hazardRuntime = createRuntimeWeb2D({
+      spec: hazardSpec,
+      onEvent(event) {
+        hazardEvents.push(event.type)
+      },
+    })
+    const initialMovingPlatform = hazardRuntime.getSnapshot().platforms.find((platform) => platform.moving)
+    hazardRuntime.step()
+    for (let index = 0; index < 18; index += 1) {
+      hazardRuntime.step()
+    }
+    const afterHazard = hazardRuntime.getSnapshot()
+    const movedPlatform = afterHazard.platforms.find((platform) => platform.id === initialMovingPlatform?.id)
+
+    expect(afterHazard.hazards).toHaveLength(1)
+    expect(afterHazard.player?.health).toBeLessThan(afterHazard.player?.max_health ?? 0)
+    expect(hazardEvents).toContain("player_damaged")
+    expect(movedPlatform?.x === initialMovingPlatform?.x && movedPlatform?.y === initialMovingPlatform?.y).toBe(false)
+
+    const goalSpec = compilePlatformerSpec()
+    goalSpec.scene.parameters = {
+      ...goalSpec.scene.parameters,
+      goal_enabled: true,
+    }
+    goalSpec.entities = goalSpec.entities.map((entity) =>
+      entity.id === "player_1"
+        ? {
+            ...entity,
+            position: { x: 2648, y: 348 },
+          }
+        : entity,
+    )
+    const goalEvents: string[] = []
+    const goalRuntime = createRuntimeWeb2D({
+      spec: goalSpec,
+      onEvent(event) {
+        goalEvents.push(event.type)
+      },
+    })
+    goalRuntime.step()
+
+    expect(goalRuntime.getSnapshot().goal?.reached).toBe(true)
+    expect(goalEvents).toContain("goal_reached")
+  })
+
+  it("fires 2D projectiles, damages enemies, and emits combat events", () => {
+    const spec = compilePlatformerSpec(["combat/side_scroller_projectile_weapon"])
+    spec.entities = spec.entities.map((entity) => {
+      if (entity.id === "player_1") {
+        return {
+          ...entity,
+          position: { x: 120, y: 952 },
+          module_configs: {
+            ...entity.module_configs,
+            "combat/side_scroller_projectile_weapon": {
+              ...entity.module_configs["combat/side_scroller_projectile_weapon"],
+              damage: 2,
+            },
+          },
+        }
+      }
+
+      if (entity.id === "enemy_1") {
+        return {
+          ...entity,
+          position: { x: 520, y: 956 },
+        }
+      }
+
+      return entity
+    })
+
+    const events: string[] = []
+    const runtime = createRuntimeWeb2D({
+      spec,
+      onEvent(event) {
+        events.push(event.type)
+      },
+    })
+
+    runtime.step(undefined, { fire: true })
+    const afterFire = runtime.getSnapshot()
+    runtime.step(undefined, { fire: false })
+    for (let index = 0; index < 36; index += 1) {
+      runtime.step(undefined, { fire: false })
+    }
+
+    const afterHit = runtime.getSnapshot()
+    expect(afterFire.projectiles).toHaveLength(1)
+    expect(events).toContain("weapon_fired")
+    expect(events).toContain("enemy_defeated")
+    expect(afterHit.enemies[0]?.active).toBe(false)
   })
 
   it("applies gravity and collision so the player lands and stays grounded", () => {

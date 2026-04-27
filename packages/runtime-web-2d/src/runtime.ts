@@ -6,7 +6,11 @@ import type {
   RuntimeActorSnapshot,
   RuntimeCheckpointSnapshot,
   RuntimeCoinSnapshot,
+  RuntimeGoalSnapshot,
+  RuntimeHazardSnapshot,
   RuntimeInputState,
+  RuntimePlatformSnapshot,
+  RuntimeProjectileSnapshot,
   RuntimeSnapshot,
   RuntimeWeb2D,
   RuntimeWeb2DEvent,
@@ -23,6 +27,11 @@ const PLAYER_SIZE = { width: 42, height: 68 }
 const ENEMY_SIZE = { width: 40, height: 64 }
 const COIN_RADIUS = 12
 const CHECKPOINT_SIZE = { width: 22, height: 72 }
+const PROJECTILE_WIDTH = 26
+const PROJECTILE_HEIGHT = 6
+const DEFAULT_PROJECTILE_LIFETIME_MS = 1400
+const HAZARD_SIZE = { width: 70, height: 30 }
+const GOAL_SIZE = { width: 34, height: 112 }
 const CONTACT_GRACE_MS = 720
 const CONTACT_KNOCKBACK_X = 380
 const CONTACT_KNOCKBACK_Y = -320
@@ -53,6 +62,23 @@ interface RuntimeActor {
   moduleConfigs: PrototypeEntity["module_configs"]
   spawn: { x: number; y: number }
   patrol?: { minX: number; maxX: number }
+  health: number
+  maxHealth: number
+  hitFlashRemainingMs: number
+  fireCooldownRemainingMs: number
+}
+
+interface RuntimeProjectile {
+  id: string
+  x: number
+  y: number
+  vx: number
+  width: number
+  height: number
+  damage: number
+  active: boolean
+  lifetimeRemainingMs: number
+  color: string
 }
 
 interface RuntimeCoin {
@@ -76,11 +102,47 @@ interface RuntimeCheckpoint {
   respawnDelayMs: number
 }
 
+interface RuntimePlatform extends ScenePlatform {
+  baseX: number
+  baseY: number
+  prevX: number
+  prevY: number
+  moving: boolean
+  axis: "x" | "y"
+  amplitude: number
+  speed: number
+  phase: number
+}
+
+interface RuntimeHazard {
+  id: string
+  x: number
+  y: number
+  width: number
+  height: number
+  damage: number
+  active: boolean
+}
+
+interface RuntimeGoal {
+  id: string
+  x: number
+  y: number
+  width: number
+  height: number
+  active: boolean
+  reached: boolean
+}
+
 interface RuntimeWorld {
   spec: PrototypeSpec
   preset: ScenePreset
   visuals: RuntimeVisualStyle2D
+  platforms: RuntimePlatform[]
   actors: RuntimeActor[]
+  projectiles: RuntimeProjectile[]
+  hazards: RuntimeHazard[]
+  goal: RuntimeGoal | null
   coins: RuntimeCoin[]
   checkpoints: RuntimeCheckpoint[]
   systems: PrototypeSystem[]
@@ -98,20 +160,28 @@ interface RuntimeWorld {
   respawnCountdownMs: number | null
   contactGraceRemainingMs: number
   gamepadConnected: boolean
+  nextProjectileSequence: number
+  goalReached: boolean
 }
 
 interface RuntimeVisualStyle2D {
+  theme: string
   backgroundTop: string
   backgroundBottom: string
   skylineFar: string
   skylineMid: string
   cloud: string
+  atmosphere: string
   floorTop: string
   floorBody: string
   floorAccent: string
   platformTop: string
   platformBody: string
   platformAccent: string
+  hazard: string
+  hazardGlow: string
+  goal: string
+  goalGlow: string
   hudFill: string
   hudBorder: string
   hudText: string
@@ -123,6 +193,7 @@ const SUPPORTED_ENTITY_MODULES = new Set([
   "player/platformer_controller",
   "camera/side_scroll",
   "enemy/basic_enemy",
+  "combat/side_scroller_projectile_weapon",
 ])
 
 const SUPPORTED_SYSTEM_MODULES = new Set(["systems/checkpoint", "systems/coin_collectible"])
@@ -246,12 +317,19 @@ export function createRuntimeWeb2D(options: CreateRuntimeWeb2DOptions): RuntimeW
     }
 
     sampleModuleInput(player, frameInput.state, currentWorld.previousInput)
+    updateMovingPlatforms(currentWorld, deltaMs)
 
     for (const actor of currentWorld.actors) {
       if (!actor.active) continue
+      actor.fireCooldownRemainingMs = Math.max(0, actor.fireCooldownRemainingMs - deltaMs)
+      actor.hitFlashRemainingMs = Math.max(0, actor.hitFlashRemainingMs - deltaMs)
 
       if (actor.modules.includes("player/platformer_controller")) {
         runPlatformerController(actor, frameInput.state, currentWorld.previousInput)
+      }
+
+      if (actor.modules.includes("combat/side_scroller_projectile_weapon")) {
+        runProjectileWeapon(actor, frameInput.state, currentWorld.previousInput, currentWorld, emit)
       }
 
       if (actor.modules.includes("enemy/basic_enemy")) {
@@ -266,12 +344,15 @@ export function createRuntimeWeb2D(options: CreateRuntimeWeb2DOptions): RuntimeW
         applyGravity(actor, deltaSeconds)
       }
 
-      integrateActor(actor, currentWorld.preset.platforms, currentWorld.preset.width, currentWorld.preset.height, deltaSeconds)
+      integrateActor(actor, currentWorld.platforms, currentWorld.preset.width, currentWorld.preset.height, deltaSeconds)
     }
 
     processCheckpointCollection(currentWorld, player, emit)
+    processProjectiles(currentWorld, deltaMs, emit)
     processCoinCollection(currentWorld, player, emit)
-    processEnemyContacts(currentWorld, player)
+    processHazardContacts(currentWorld, player, emit)
+    processEnemyContacts(currentWorld, player, emit)
+    processGoalReached(currentWorld, player, emit)
     processRespawn(currentWorld, deltaMs, emit)
     updateCamera(currentWorld)
     currentWorld.previousInput = { ...frameInput.state }
@@ -281,7 +362,8 @@ export function createRuntimeWeb2D(options: CreateRuntimeWeb2DOptions): RuntimeW
 function createWorld(spec: PrototypeSpec): RuntimeWorld {
   const preset = getScenePreset(spec.scene.environment)
   const visuals = resolveVisualStyle2D(spec.scene.parameters)
-  const actors = instantiateActors(spec, preset)
+  const platforms = instantiatePlatforms(preset.platforms, spec.scene.parameters)
+  const actors = instantiateActors(spec, preset, platforms)
   const systems = [...spec.systems].sort((left, right) => left.id.localeCompare(right.id))
 
   const checkpoints = systems.some((system) => system.module === "systems/checkpoint")
@@ -328,12 +410,16 @@ function createWorld(spec: PrototypeSpec): RuntimeWorld {
     spec,
     preset,
     visuals,
+    platforms,
     actors,
+    projectiles: [],
+    hazards: instantiateHazards(platforms, spec.scene.parameters),
+    goal: instantiateGoal(platforms, spec.scene.parameters),
     coins,
     checkpoints,
     systems,
-    input: { left: false, right: false, jump: false },
-    previousInput: { left: false, right: false, jump: false },
+    input: { left: false, right: false, jump: false, fire: false },
+    previousInput: { left: false, right: false, jump: false, fire: false },
     camera,
     tick: 0,
     score: 0,
@@ -341,13 +427,15 @@ function createWorld(spec: PrototypeSpec): RuntimeWorld {
     respawnCountdownMs: null,
     contactGraceRemainingMs: 0,
     gamepadConnected: false,
+    nextProjectileSequence: 1,
+    goalReached: false,
   }
 
   updateCamera(world)
   return world
 }
 
-function instantiateActors(spec: PrototypeSpec, preset: ScenePreset): RuntimeActor[] {
+function instantiateActors(spec: PrototypeSpec, preset: ScenePreset, platforms: RuntimePlatform[]): RuntimeActor[] {
   const entities = [...spec.entities].sort((left, right) => left.id.localeCompare(right.id))
   const playerSpawn = preset.player_spawn
   const playerEntity = entities.find((entity) => entity.kind === "player")
@@ -387,7 +475,7 @@ function instantiateActors(spec: PrototypeSpec, preset: ScenePreset): RuntimeAct
       "enemy",
       spawnMarker,
     )
-    actor.patrol = resolvePatrolRange(actor, preset.platforms)
+    actor.patrol = resolvePatrolRange(actor, platforms)
     actors.push(actor)
   }
 
@@ -403,7 +491,13 @@ function createActorFromEntity(
     throw new Error(`runtime-web-2d only supports ${kind} entities in this path.`)
   }
 
-  const size = kind === "player" ? PLAYER_SIZE : ENEMY_SIZE
+  const size = resolveActorSize(kind, entity.module_configs[kind === "player" ? "player/platformer_controller" : "enemy/basic_enemy"] ?? {})
+  const playerConfig = entity.module_configs["player/platformer_controller"] ?? {}
+  const enemyConfig = entity.module_configs["enemy/basic_enemy"] ?? {}
+  const maxHealth =
+    kind === "enemy"
+      ? Math.max(1, toInteger(enemyConfig.health, 2))
+      : Math.max(1, toInteger(playerConfig.max_health, 3))
   return {
     id: entity.id,
     kind,
@@ -422,7 +516,78 @@ function createActorFromEntity(
       x: spawnMarker.x,
       y: spawnMarker.y,
     },
+    health: maxHealth,
+    maxHealth,
+    hitFlashRemainingMs: 0,
+    fireCooldownRemainingMs: 0,
   } satisfies RuntimeActor
+}
+
+function resolveActorSize(kind: "player" | "enemy", config: PrototypeEntity["module_configs"][string]) {
+  const base = kind === "player" ? PLAYER_SIZE : ENEMY_SIZE
+  const sizeClass = typeof config.size_class === "string" ? config.size_class : typeof config.variant === "string" ? config.variant : "medium"
+  const scale = sizeClass === "small" || sizeClass === "fast" ? 0.86 : sizeClass === "large" || sizeClass === "tank" ? 1.18 : 1
+  return {
+    width: Math.round(base.width * scale),
+    height: Math.round(base.height * scale),
+  }
+}
+
+function instantiatePlatforms(platforms: ScenePlatform[], parameters: PrototypeSpec["scene"]["parameters"]): RuntimePlatform[] {
+  const movingCount = clampInteger(toInteger(parameters.moving_platform_count, 0), 0, 4)
+  return platforms.map((platform, index) => {
+    const moving = index > 0 && index <= movingCount
+    return {
+      ...platform,
+      baseX: platform.x,
+      baseY: platform.y,
+      prevX: platform.x,
+      prevY: platform.y,
+      moving,
+      axis: index % 2 === 0 ? "x" : "y",
+      amplitude: moving ? 48 + index * 10 : 0,
+      speed: moving ? 0.0018 + index * 0.00016 : 0,
+      phase: index * 0.78,
+    }
+  })
+}
+
+function instantiateHazards(platforms: RuntimePlatform[], parameters: PrototypeSpec["scene"]["parameters"]): RuntimeHazard[] {
+  const requestedCount = clampInteger(toInteger(parameters.hazard_count, 0), 0, 8)
+  const damage = clampInteger(toInteger(parameters.hazard_damage, 1), 1, 6)
+  if (requestedCount <= 0 || platforms.length === 0) return []
+
+  const candidatePlatforms = platforms.filter((platform) => platform.id !== "floor" && platform.width >= HAZARD_SIZE.width + 20)
+  return Array.from({ length: requestedCount }, (_, index) => {
+    const platform = candidatePlatforms[index % Math.max(candidatePlatforms.length, 1)] ?? platforms[0]
+    return {
+      id: `hazard_${index + 1}`,
+      x: platform.x + platform.width * (0.36 + (index % 2) * 0.22) - HAZARD_SIZE.width / 2,
+      y: platform.y - HAZARD_SIZE.height,
+      width: HAZARD_SIZE.width,
+      height: HAZARD_SIZE.height,
+      damage,
+      active: true,
+    }
+  })
+}
+
+function instantiateGoal(platforms: RuntimePlatform[], parameters: PrototypeSpec["scene"]["parameters"]): RuntimeGoal | null {
+  if (parameters.goal_enabled === false) return null
+  const platform = [...platforms]
+    .filter((entry) => entry.id !== "floor")
+    .sort((left, right) => right.x - left.x)[0]
+
+  if (!platform) return null
+  return {
+    id: "goal_1",
+    x: platform.x + platform.width - GOAL_SIZE.width - 18,
+    y: platform.y - GOAL_SIZE.height,
+    width: GOAL_SIZE.width,
+    height: GOAL_SIZE.height,
+    active: true,
+    reached: false,
+  }
 }
 
 function validateEntityModules(entity: PrototypeEntity) {
@@ -440,7 +605,8 @@ function runPlatformerController(actor: RuntimeActor, input: RuntimeInputState, 
   if (input.left === input.right) {
     actor.vx = 0
   } else {
-    actor.vx = (input.left ? -1 : 1) * moveSpeed * 120
+    actor.direction = input.left ? -1 : 1
+    actor.vx = actor.direction * moveSpeed * 120
   }
 
   if (input.jump && !previousInput.jump && actor.grounded) {
@@ -450,7 +616,10 @@ function runPlatformerController(actor: RuntimeActor, input: RuntimeInputState, 
 }
 
 function runEnemyController(actor: RuntimeActor) {
-  const moveSpeed = toNumber(actor.moduleConfigs["enemy/basic_enemy"]?.move_speed, 2.5)
+  const enemyConfig = actor.moduleConfigs["enemy/basic_enemy"] ?? {}
+  const variant = typeof enemyConfig.variant === "string" ? enemyConfig.variant : "patrol"
+  const variantMultiplier = variant === "fast" ? 1.32 : variant === "tank" ? 0.78 : 1
+  const moveSpeed = toNumber(enemyConfig.move_speed, 2.5) * variantMultiplier
   if (!actor.patrol) {
     actor.vx = actor.direction * moveSpeed * 90
     return
@@ -463,6 +632,99 @@ function runEnemyController(actor: RuntimeActor) {
   }
 
   actor.vx = actor.direction * moveSpeed * 90
+}
+
+function runProjectileWeapon(
+  actor: RuntimeActor,
+  input: RuntimeInputState,
+  previousInput: RuntimeInputState,
+  world: RuntimeWorld,
+  emit: (event: RuntimeWeb2DEvent) => void,
+) {
+  if (!input.fire || previousInput.fire || actor.fireCooldownRemainingMs > 0) return
+
+  const weaponConfig = actor.moduleConfigs["combat/side_scroller_projectile_weapon"] ?? {}
+  const damage = Math.max(1, toInteger(weaponConfig.damage, 1))
+  const projectileSpeed = Math.max(80, toNumber(weaponConfig.projectile_speed, 820))
+  const projectileColor = toHexString(weaponConfig.projectile_color, "#fbbf24")
+  const direction = actor.direction >= 0 ? 1 : -1
+  const projectile: RuntimeProjectile = {
+    id: `projectile_${world.nextProjectileSequence++}`,
+    x: direction > 0 ? actor.x + actor.width - 2 : actor.x - PROJECTILE_WIDTH + 2,
+    y: actor.y + actor.height * 0.45,
+    vx: direction * projectileSpeed,
+    width: PROJECTILE_WIDTH,
+    height: PROJECTILE_HEIGHT,
+    damage,
+    active: true,
+    lifetimeRemainingMs: DEFAULT_PROJECTILE_LIFETIME_MS,
+    color: projectileColor,
+  }
+
+  world.projectiles.push(projectile)
+  actor.fireCooldownRemainingMs = Math.max(80, toInteger(weaponConfig.fire_cooldown_ms, 260))
+  emit({ type: "weapon_fired", projectile_id: projectile.id })
+}
+
+function updateMovingPlatforms(world: RuntimeWorld, deltaMs: number) {
+  const elapsedMs = world.tick * deltaMs
+  for (const platform of world.platforms) {
+    platform.prevX = platform.x
+    platform.prevY = platform.y
+    if (!platform.moving) continue
+
+    const offset = Math.sin(elapsedMs * platform.speed + platform.phase) * platform.amplitude
+    if (platform.axis === "x") {
+      platform.x = platform.baseX + offset
+    } else {
+      platform.y = platform.baseY + offset
+    }
+  }
+}
+
+function processProjectiles(
+  world: RuntimeWorld,
+  deltaMs: number,
+  emit: (event: RuntimeWeb2DEvent) => void,
+) {
+  const deltaSeconds = deltaMs / 1000
+
+  for (const projectile of world.projectiles) {
+    if (!projectile.active) continue
+
+    projectile.x += projectile.vx * deltaSeconds
+    projectile.lifetimeRemainingMs -= deltaMs
+
+    if (
+      projectile.lifetimeRemainingMs <= 0 ||
+      projectile.x < -PROJECTILE_WIDTH ||
+      projectile.x > world.preset.width + PROJECTILE_WIDTH
+    ) {
+      projectile.active = false
+      continue
+    }
+
+    const hitEnemy = world.actors.find(
+      (actor) =>
+        actor.kind === "enemy" &&
+        actor.active &&
+        rectsOverlap(projectile.x, projectile.y, projectile.width, projectile.height, actor.x, actor.y, actor.width, actor.height),
+    )
+
+    if (!hitEnemy) continue
+
+    projectile.active = false
+    hitEnemy.health = Math.max(0, hitEnemy.health - projectile.damage)
+    hitEnemy.hitFlashRemainingMs = 140
+    hitEnemy.vx += projectile.vx > 0 ? 120 : -120
+
+    if (hitEnemy.health <= 0) {
+      hitEnemy.active = false
+      emit({ type: "enemy_defeated", enemy_id: hitEnemy.id })
+    }
+  }
+
+  world.projectiles = world.projectiles.filter((projectile) => projectile.active)
 }
 
 function applyGravity(actor: RuntimeActor, deltaSeconds: number) {
@@ -540,7 +802,19 @@ function processCheckpointCollection(world: RuntimeWorld, player: RuntimeActor, 
   }
 }
 
-function processEnemyContacts(world: RuntimeWorld, player: RuntimeActor) {
+function processHazardContacts(world: RuntimeWorld, player: RuntimeActor, emit: (event: RuntimeWeb2DEvent) => void) {
+  if (world.respawnCountdownMs !== null || world.contactGraceRemainingMs > 0 || !player.active) return
+
+  const hazard = world.hazards.find((entry) =>
+    entry.active && rectsOverlap(player.x, player.y, player.width, player.height, entry.x, entry.y, entry.width, entry.height),
+  )
+  if (!hazard) return
+
+  const direction = player.x + player.width / 2 < hazard.x + hazard.width / 2 ? -1 : 1
+  damagePlayer(world, player, hazard.damage, "hazard", direction, emit)
+}
+
+function processEnemyContacts(world: RuntimeWorld, player: RuntimeActor, emit: (event: RuntimeWeb2DEvent) => void) {
   if (world.respawnCountdownMs !== null) return
 
   if (player.y > world.preset.height + 32 || !player.active) {
@@ -562,12 +836,57 @@ function processEnemyContacts(world: RuntimeWorld, player: RuntimeActor) {
   )
 
   if (enemy) {
+    const playerBottom = player.y + player.height
+    const enemyTop = enemy.y
+    const isStomp = player.vy > 80 && playerBottom - enemyTop < Math.max(28, enemy.height * 0.42)
+    if (isStomp) {
+      enemy.health = 0
+      enemy.active = false
+      enemy.vx = 0
+      player.vy = CONTACT_KNOCKBACK_Y * 0.78
+      player.grounded = false
+      emit({ type: "enemy_defeated", enemy_id: enemy.id })
+      return
+    }
+
     const direction = enemy.x < player.x ? 1 : -1
-    player.vx = direction * CONTACT_KNOCKBACK_X
-    player.vy = CONTACT_KNOCKBACK_Y
-    player.grounded = false
-    player.x = clamp(player.x + direction * 18, 0, world.preset.width - player.width)
-    world.contactGraceRemainingMs = CONTACT_GRACE_MS
+    const damage = clampInteger(toInteger(enemy.moduleConfigs["enemy/basic_enemy"]?.contact_damage, 1), 1, 6)
+    damagePlayer(world, player, damage, "enemy", direction, emit)
+  }
+}
+
+function processGoalReached(world: RuntimeWorld, player: RuntimeActor, emit: (event: RuntimeWeb2DEvent) => void) {
+  const goal = world.goal
+  if (!goal || goal.reached || !player.active) return
+  if (!rectsOverlap(player.x, player.y, player.width, player.height, goal.x, goal.y, goal.width, goal.height)) return
+
+  goal.reached = true
+  world.goalReached = true
+  emit({ type: "goal_reached", goal_id: goal.id })
+}
+
+function damagePlayer(
+  world: RuntimeWorld,
+  player: RuntimeActor,
+  damage: number,
+  source: "enemy" | "hazard",
+  direction: -1 | 1,
+  emit: (event: RuntimeWeb2DEvent) => void,
+) {
+  player.health = Math.max(0, player.health - damage)
+  player.hitFlashRemainingMs = 180
+  player.vx = direction * CONTACT_KNOCKBACK_X
+  player.vy = CONTACT_KNOCKBACK_Y
+  player.grounded = false
+  player.x = clamp(player.x + direction * 18, 0, world.preset.width - player.width)
+  world.contactGraceRemainingMs = CONTACT_GRACE_MS
+  emit({ type: "player_damaged", health: player.health, source })
+
+  if (player.health <= 0) {
+    world.respawnCountdownMs = world.checkpoints.find((entry) => entry.id === world.activeCheckpointId)?.respawnDelayMs ?? 800
+    player.active = false
+    player.vx = 0
+    player.vy = 0
   }
 }
 
@@ -588,6 +907,7 @@ function processRespawn(world: RuntimeWorld, deltaMs: number, emit: (event: Runt
   player.y = respawnY
   player.vx = 0
   player.vy = 0
+  player.health = player.maxHealth
   player.active = true
   player.grounded = false
   world.respawnCountdownMs = null
@@ -632,9 +952,12 @@ function renderWorld(world: RuntimeWorld, canvas: HTMLCanvasElement | null) {
   context.save()
   context.translate(-world.camera.x, -world.camera.y)
 
-  drawPlatforms(context, world.preset.platforms, world.visuals)
+  drawPlatforms(context, world.platforms, world.visuals)
+  drawHazards(context, world.hazards, world.visuals)
   drawCoins(context, world.coins)
   drawCheckpoints(context, world.checkpoints)
+  drawGoal(context, world.goal, world.visuals)
+  drawProjectiles(context, world.projectiles)
   drawActors(context, world.actors)
 
   context.restore()
@@ -647,6 +970,18 @@ function drawBackdrop(context: CanvasRenderingContext2D, world: RuntimeWorld, vi
   const horizonY = viewportHeight * 0.62
 
   context.save()
+
+  context.globalAlpha = 0.42
+  context.fillStyle = world.visuals.atmosphere
+  context.beginPath()
+  if (world.visuals.theme === "lava") {
+    context.arc(viewportWidth - 132, 132, 62, 0, Math.PI * 2)
+  } else if (world.visuals.theme === "night" || world.visuals.theme === "cyberpunk" || world.visuals.theme === "neon") {
+    context.arc(viewportWidth - 130, 118, 46, 0, Math.PI * 2)
+  } else {
+    context.arc(viewportWidth - 120, 118, 54, 0, Math.PI * 2)
+  }
+  context.fill()
 
   context.globalAlpha = 0.2
   context.fillStyle = world.visuals.cloud
@@ -686,10 +1021,19 @@ function drawBackdrop(context: CanvasRenderingContext2D, world: RuntimeWorld, vi
     context.fill()
   }
 
+  context.globalAlpha = 0.2
+  context.fillStyle = world.visuals.platformAccent
+  for (let index = 0; index < 14; index += 1) {
+    const x = ((index * 247 + midShift * 0.55) % (viewportWidth + 260)) - 130
+    const y = horizonY + 82 + (index % 4) * 18
+    roundRect(context, x, y, 92 + (index % 3) * 24, 8, 999)
+    context.fill()
+  }
+
   context.restore()
 }
 
-function drawPlatforms(context: CanvasRenderingContext2D, platforms: ScenePlatform[], visuals: RuntimeVisualStyle2D) {
+function drawPlatforms(context: CanvasRenderingContext2D, platforms: RuntimePlatform[], visuals: RuntimeVisualStyle2D) {
   for (const platform of platforms) {
     const topColor = platform.id === "floor" ? visuals.floorTop : visuals.platformTop
     const bodyColor = platform.id === "floor" ? visuals.floorBody : visuals.platformBody
@@ -708,10 +1052,37 @@ function drawPlatforms(context: CanvasRenderingContext2D, platforms: ScenePlatfo
 
     context.fillStyle = accentColor
     context.fillRect(platform.x + 6, platform.y + 6, Math.max(0, platform.width - 12), 2)
+    if (platform.moving) {
+      context.fillStyle = visuals.goalGlow
+      context.fillRect(platform.x + 12, platform.y + platform.height - 8, Math.max(0, platform.width - 24), 3)
+    }
 
     context.strokeStyle = "rgba(255,255,255,0.16)"
     context.lineWidth = 2
     context.strokeRect(platform.x, platform.y, platform.width, platform.height)
+  }
+}
+
+function drawHazards(context: CanvasRenderingContext2D, hazards: RuntimeHazard[], visuals: RuntimeVisualStyle2D) {
+  for (const hazard of hazards) {
+    if (!hazard.active) continue
+    context.save()
+    context.shadowColor = visuals.hazardGlow
+    context.shadowBlur = 16
+    context.fillStyle = visuals.hazard
+    const spikeCount = 4
+    const spikeWidth = hazard.width / spikeCount
+    context.beginPath()
+    context.moveTo(hazard.x, hazard.y + hazard.height)
+    for (let index = 0; index < spikeCount; index += 1) {
+      context.lineTo(hazard.x + spikeWidth * (index + 0.5), hazard.y)
+      context.lineTo(hazard.x + spikeWidth * (index + 1), hazard.y + hazard.height)
+    }
+    context.closePath()
+    context.fill()
+    context.strokeStyle = "rgba(255,255,255,0.24)"
+    context.stroke()
+    context.restore()
   }
 }
 
@@ -753,13 +1124,50 @@ function drawCheckpoints(context: CanvasRenderingContext2D, checkpoints: Runtime
   }
 }
 
+function drawGoal(context: CanvasRenderingContext2D, goal: RuntimeGoal | null, visuals: RuntimeVisualStyle2D) {
+  if (!goal || !goal.active) return
+  context.save()
+  context.shadowColor = visuals.goalGlow
+  context.shadowBlur = goal.reached ? 28 : 16
+  context.fillStyle = visuals.goal
+  context.fillRect(goal.x, goal.y, 10, goal.height)
+  context.beginPath()
+  context.moveTo(goal.x + 10, goal.y + 10)
+  context.lineTo(goal.x + goal.width, goal.y + 24)
+  context.lineTo(goal.x + 10, goal.y + 42)
+  context.closePath()
+  context.fill()
+  context.shadowBlur = 0
+  context.strokeStyle = "rgba(255,255,255,0.32)"
+  context.strokeRect(goal.x, goal.y, 10, goal.height)
+  context.restore()
+}
+
+function drawProjectiles(context: CanvasRenderingContext2D, projectiles: RuntimeProjectile[]) {
+  for (const projectile of projectiles) {
+    if (!projectile.active) continue
+
+    context.save()
+    context.shadowColor = hexToAlpha(projectile.color, 0.62)
+    context.shadowBlur = 16
+    context.fillStyle = projectile.color
+    roundRect(context, projectile.x, projectile.y, projectile.width, projectile.height, 999)
+    context.fill()
+    context.shadowBlur = 0
+    context.fillStyle = "rgba(255,255,255,0.72)"
+    context.fillRect(projectile.x + 4, projectile.y + 1, Math.max(4, projectile.width * 0.45), 2)
+    context.restore()
+  }
+}
+
 function drawActors(context: CanvasRenderingContext2D, actors: RuntimeActor[]) {
   for (const actor of actors) {
     if (!actor.active) continue
     const palette = resolveActorPalette(actor)
-    const bodyColor = palette.body
+    const bodyColor = actor.hitFlashRemainingMs > 0 ? "#fef2f2" : palette.body
     const accentColor = palette.accent
     const topColor = palette.top
+    const outlineColor = palette.outline
     const shadowWidth = actor.width * 0.68
 
     context.save()
@@ -771,8 +1179,12 @@ function drawActors(context: CanvasRenderingContext2D, actors: RuntimeActor[]) {
     context.shadowColor = actor.kind === "player" ? "rgba(79,163,255,0.28)" : "rgba(255,107,107,0.26)"
     context.shadowBlur = 14
     context.shadowOffsetY = 6
+    context.fillStyle = outlineColor
+    roundRect(context, actor.x - 2, actor.y - 2, actor.width + 4, actor.height + 4, 8)
+    context.fill()
     context.fillStyle = bodyColor
-    context.fillRect(actor.x, actor.y, actor.width, actor.height)
+    roundRect(context, actor.x, actor.y, actor.width, actor.height, 6)
+    context.fill()
     context.shadowBlur = 0
     context.shadowOffsetY = 0
     context.fillStyle = topColor
@@ -782,6 +1194,15 @@ function drawActors(context: CanvasRenderingContext2D, actors: RuntimeActor[]) {
     context.fillRect(actor.x + actor.width - 10, actor.y + 10, 4, 4)
     context.strokeStyle = "rgba(255,255,255,0.22)"
     context.strokeRect(actor.x, actor.y, actor.width, actor.height)
+
+    if (actor.maxHealth > 1) {
+      const healthWidth = actor.width
+      const healthRatio = clamp(actor.health / actor.maxHealth, 0, 1)
+      context.fillStyle = "rgba(15,23,42,0.72)"
+      context.fillRect(actor.x, actor.y - 10, healthWidth, 4)
+      context.fillStyle = actor.kind === "player" ? "#38bdf8" : "#fb7185"
+      context.fillRect(actor.x, actor.y - 10, healthWidth * healthRatio, 4)
+    }
     context.restore()
   }
 }
@@ -799,8 +1220,9 @@ function drawHud(context: CanvasRenderingContext2D, world: RuntimeWorld, viewpor
   context.fillText("Playable Prototype", 42, 47)
   context.font = "500 13px ui-sans-serif, system-ui, sans-serif"
   context.fillStyle = world.visuals.hudSubtext
-  context.fillText(`Coins: ${world.score}`, 42, 70)
-  context.fillText(`Checkpoint: ${world.activeCheckpointId ?? "Not reached yet"}`, 42, 91)
+  const player = getPlayer(world)
+  context.fillText(`Health: ${player?.health ?? 0}/${player?.maxHealth ?? 0}  Coins: ${world.score}`, 42, 70)
+  context.fillText(world.goalReached ? "Goal: Reached" : `Checkpoint: ${world.activeCheckpointId ?? "Not reached yet"}`, 42, 91)
 
   const controlsX = Math.max(24, viewportWidth - 396)
   roundRect(context, controlsX, 20, 372, 72, 18)
@@ -812,7 +1234,7 @@ function drawHud(context: CanvasRenderingContext2D, world: RuntimeWorld, viewpor
   context.fillText(world.gamepadConnected ? "Controller connected" : "Keyboard ready", controlsX + 18, 47)
   context.fillStyle = world.visuals.hudSubtext
   context.fillText(
-    world.gamepadConnected ? "Left Stick / D-pad move • A / Cross jump" : "A / D or Arrow Keys move • Space jump",
+    world.gamepadConnected ? "Left Stick / D-pad move • A / Cross jump • X fire" : "A / D or Arrow Keys move • Space jump • J/F fire",
     controlsX + 18,
     69,
   )
@@ -823,89 +1245,211 @@ function resolveVisualStyle2D(parameters: PrototypeSpec["scene"]["parameters"]):
   const theme = typeof parameters.visual_theme === "string" ? parameters.visual_theme : "default"
   const themes: Record<string, RuntimeVisualStyle2D> = {
     default: {
+      theme: "default",
       backgroundTop: "#7dd3fc",
       backgroundBottom: "#0f172a",
       skylineFar: "#0f2240",
       skylineMid: "#17305a",
       cloud: "#d9f4ff",
+      atmosphere: "#fde68a",
       floorTop: "#34456a",
       floorBody: "#24324d",
       floorAccent: "rgba(110, 231, 255, 0.16)",
       platformTop: "#49628f",
       platformBody: "#31476d",
       platformAccent: "rgba(255,255,255,0.14)",
+      hazard: "#ef4444",
+      hazardGlow: "rgba(248,113,113,0.48)",
+      goal: "#22d3ee",
+      goalGlow: "rgba(34,211,238,0.5)",
       hudFill: "rgba(6, 10, 20, 0.8)",
       hudBorder: "rgba(103, 232, 249, 0.28)",
       hudText: "#d9faff",
       hudSubtext: "rgba(217,250,255,0.88)",
     },
     neon: {
+      theme: "neon",
       backgroundTop: "#312e81",
       backgroundBottom: "#020617",
       skylineFar: "#1d4ed8",
       skylineMid: "#0f766e",
       cloud: "#99f6e4",
+      atmosphere: "#22d3ee",
       floorTop: "#0f766e",
       floorBody: "#164e63",
       floorAccent: "rgba(34,211,238,0.34)",
       platformTop: "#7c3aed",
       platformBody: "#312e81",
       platformAccent: "rgba(248,113,113,0.24)",
+      hazard: "#fb7185",
+      hazardGlow: "rgba(251,113,133,0.58)",
+      goal: "#67e8f9",
+      goalGlow: "rgba(103,232,249,0.62)",
       hudFill: "rgba(2, 6, 23, 0.84)",
       hudBorder: "rgba(167,139,250,0.45)",
       hudText: "#e0f2fe",
       hudSubtext: "rgba(191,219,254,0.9)",
     },
     sunset: {
+      theme: "sunset",
       backgroundTop: "#fb7185",
       backgroundBottom: "#1f2937",
       skylineFar: "#7c2d12",
       skylineMid: "#b45309",
       cloud: "#fde68a",
+      atmosphere: "#fed7aa",
       floorTop: "#92400e",
       floorBody: "#451a03",
       floorAccent: "rgba(253,230,138,0.24)",
       platformTop: "#f97316",
       platformBody: "#7c2d12",
       platformAccent: "rgba(255,237,213,0.18)",
+      hazard: "#ef4444",
+      hazardGlow: "rgba(249,115,22,0.52)",
+      goal: "#fde68a",
+      goalGlow: "rgba(253,230,138,0.56)",
       hudFill: "rgba(30, 18, 12, 0.82)",
       hudBorder: "rgba(251,146,60,0.36)",
       hudText: "#fff7ed",
       hudSubtext: "rgba(255,237,213,0.9)",
     },
     cyberpunk: {
+      theme: "cyberpunk",
       backgroundTop: "#1e1b4b",
       backgroundBottom: "#030712",
       skylineFar: "#581c87",
       skylineMid: "#0f766e",
       cloud: "#c4b5fd",
+      atmosphere: "#a855f7",
       floorTop: "#0f766e",
       floorBody: "#1e1b4b",
       floorAccent: "rgba(168,85,247,0.24)",
       platformTop: "#a855f7",
       platformBody: "#312e81",
       platformAccent: "rgba(34,211,238,0.24)",
+      hazard: "#f43f5e",
+      hazardGlow: "rgba(244,63,94,0.54)",
+      goal: "#22d3ee",
+      goalGlow: "rgba(34,211,238,0.62)",
       hudFill: "rgba(7, 9, 22, 0.84)",
       hudBorder: "rgba(168,85,247,0.38)",
       hudText: "#ede9fe",
       hudSubtext: "rgba(216,180,254,0.88)",
     },
     night: {
+      theme: "night",
       backgroundTop: "#1d4ed8",
       backgroundBottom: "#020617",
       skylineFar: "#0f172a",
       skylineMid: "#1e293b",
       cloud: "#bfdbfe",
+      atmosphere: "#dbeafe",
       floorTop: "#334155",
       floorBody: "#0f172a",
       floorAccent: "rgba(96,165,250,0.2)",
       platformTop: "#475569",
       platformBody: "#1e293b",
       platformAccent: "rgba(255,255,255,0.1)",
+      hazard: "#f87171",
+      hazardGlow: "rgba(248,113,113,0.42)",
+      goal: "#60a5fa",
+      goalGlow: "rgba(96,165,250,0.5)",
       hudFill: "rgba(2, 6, 23, 0.82)",
       hudBorder: "rgba(96,165,250,0.28)",
       hudText: "#e0f2fe",
       hudSubtext: "rgba(191,219,254,0.86)",
+    },
+    forest: {
+      theme: "forest",
+      backgroundTop: "#86efac",
+      backgroundBottom: "#052e16",
+      skylineFar: "#14532d",
+      skylineMid: "#166534",
+      cloud: "#dcfce7",
+      atmosphere: "#fef08a",
+      floorTop: "#15803d",
+      floorBody: "#14532d",
+      floorAccent: "rgba(187,247,208,0.24)",
+      platformTop: "#22c55e",
+      platformBody: "#166534",
+      platformAccent: "rgba(220,252,231,0.2)",
+      hazard: "#f97316",
+      hazardGlow: "rgba(249,115,22,0.46)",
+      goal: "#bef264",
+      goalGlow: "rgba(190,242,100,0.5)",
+      hudFill: "rgba(5, 46, 22, 0.82)",
+      hudBorder: "rgba(134,239,172,0.34)",
+      hudText: "#dcfce7",
+      hudSubtext: "rgba(220,252,231,0.88)",
+    },
+    ice: {
+      theme: "ice",
+      backgroundTop: "#cffafe",
+      backgroundBottom: "#164e63",
+      skylineFar: "#0e7490",
+      skylineMid: "#0891b2",
+      cloud: "#ecfeff",
+      atmosphere: "#a5f3fc",
+      floorTop: "#67e8f9",
+      floorBody: "#0e7490",
+      floorAccent: "rgba(236,254,255,0.28)",
+      platformTop: "#a5f3fc",
+      platformBody: "#0891b2",
+      platformAccent: "rgba(255,255,255,0.28)",
+      hazard: "#38bdf8",
+      hazardGlow: "rgba(103,232,249,0.46)",
+      goal: "#e0f2fe",
+      goalGlow: "rgba(224,242,254,0.54)",
+      hudFill: "rgba(8,47,73,0.8)",
+      hudBorder: "rgba(165,243,252,0.36)",
+      hudText: "#ecfeff",
+      hudSubtext: "rgba(236,254,255,0.9)",
+    },
+    lava: {
+      theme: "lava",
+      backgroundTop: "#7f1d1d",
+      backgroundBottom: "#111827",
+      skylineFar: "#451a03",
+      skylineMid: "#9a3412",
+      cloud: "#fed7aa",
+      atmosphere: "#fb923c",
+      floorTop: "#f97316",
+      floorBody: "#431407",
+      floorAccent: "rgba(251,146,60,0.32)",
+      platformTop: "#dc2626",
+      platformBody: "#7f1d1d",
+      platformAccent: "rgba(253,186,116,0.24)",
+      hazard: "#facc15",
+      hazardGlow: "rgba(250,204,21,0.56)",
+      goal: "#fb923c",
+      goalGlow: "rgba(251,146,60,0.6)",
+      hudFill: "rgba(24, 10, 7, 0.84)",
+      hudBorder: "rgba(249,115,22,0.4)",
+      hudText: "#ffedd5",
+      hudSubtext: "rgba(255,237,213,0.88)",
+    },
+    arcade: {
+      theme: "arcade",
+      backgroundTop: "#0f172a",
+      backgroundBottom: "#020617",
+      skylineFar: "#7c3aed",
+      skylineMid: "#db2777",
+      cloud: "#f0abfc",
+      atmosphere: "#f0abfc",
+      floorTop: "#22d3ee",
+      floorBody: "#312e81",
+      floorAccent: "rgba(244,114,182,0.3)",
+      platformTop: "#f472b6",
+      platformBody: "#7c2d12",
+      platformAccent: "rgba(34,211,238,0.28)",
+      hazard: "#f43f5e",
+      hazardGlow: "rgba(244,63,94,0.58)",
+      goal: "#facc15",
+      goalGlow: "rgba(250,204,21,0.58)",
+      hudFill: "rgba(2, 6, 23, 0.86)",
+      hudBorder: "rgba(244,114,182,0.42)",
+      hudText: "#fdf4ff",
+      hudSubtext: "rgba(245,208,254,0.9)",
     },
   }
 
@@ -961,6 +1505,7 @@ function resolveActorPalette(actor: RuntimeActor) {
     body: configuredBody,
     top: lightenHex(configuredBody, 0.18),
     accent: configuredAccent,
+    outline: toHexString(actor.moduleConfigs[moduleId]?.outline_color, darkenHex(configuredBody, 0.42)),
   }
 }
 
@@ -996,11 +1541,43 @@ function createSnapshot(world: RuntimeWorld, running: boolean): RuntimeSnapshot 
         height: round(world.camera.height),
       },
     },
+    platforms: world.platforms.map<RuntimePlatformSnapshot>((platform) => ({
+      id: platform.id,
+      x: round(platform.x),
+      y: round(platform.y),
+      width: round(platform.width),
+      height: round(platform.height),
+      moving: platform.moving,
+    })),
     player: toActorSnapshot(getPlayer(world)),
     enemies: world.actors
       .filter((actor) => actor.kind === "enemy")
       .map((actor) => toActorSnapshot(actor))
       .filter((actor): actor is RuntimeActorSnapshot => Boolean(actor)),
+    projectiles: world.projectiles.map<RuntimeProjectileSnapshot>((projectile) => ({
+      id: projectile.id,
+      x: round(projectile.x),
+      y: round(projectile.y),
+      vx: round(projectile.vx),
+      active: projectile.active,
+    })),
+    hazards: world.hazards.map<RuntimeHazardSnapshot>((hazard) => ({
+      id: hazard.id,
+      x: round(hazard.x),
+      y: round(hazard.y),
+      width: round(hazard.width),
+      height: round(hazard.height),
+      active: hazard.active,
+    })),
+    goal: world.goal
+      ? ({
+          id: world.goal.id,
+          x: round(world.goal.x),
+          y: round(world.goal.y),
+          active: world.goal.active,
+          reached: world.goal.reached,
+        } satisfies RuntimeGoalSnapshot)
+      : null,
     coins: world.coins.map<RuntimeCoinSnapshot>((coin) => ({
       id: coin.id,
       x: round(coin.x),
@@ -1033,6 +1610,8 @@ function toActorSnapshot(actor: RuntimeActor | null): RuntimeActorSnapshot | nul
     grounded: actor.grounded,
     active: actor.active,
     modules: [...actor.modules],
+    health: actor.health,
+    max_health: actor.maxHealth,
   }
 }
 
@@ -1049,20 +1628,36 @@ function bindKeyboardInput(input: RuntimeInputState) {
     if (event.code === "ArrowLeft" || event.code === "KeyA") input.left = true
     if (event.code === "ArrowRight" || event.code === "KeyD") input.right = true
     if (event.code === "Space" || event.code === "ArrowUp" || event.code === "KeyW") input.jump = true
+    if (event.code === "KeyJ" || event.code === "KeyF") input.fire = true
   }
 
   const handleKeyUp = (event: KeyboardEvent) => {
     if (event.code === "ArrowLeft" || event.code === "KeyA") input.left = false
     if (event.code === "ArrowRight" || event.code === "KeyD") input.right = false
     if (event.code === "Space" || event.code === "ArrowUp" || event.code === "KeyW") input.jump = false
+    if (event.code === "KeyJ" || event.code === "KeyF") input.fire = false
+  }
+
+  const handleMouseDown = (event: MouseEvent) => {
+    if (event.button !== 0) return
+    input.fire = true
+  }
+
+  const handleMouseUp = (event: MouseEvent) => {
+    if (event.button !== 0) return
+    input.fire = false
   }
 
   window.addEventListener("keydown", handleKeyDown)
   window.addEventListener("keyup", handleKeyUp)
+  window.addEventListener("mousedown", handleMouseDown)
+  window.addEventListener("mouseup", handleMouseUp)
 
   return () => {
     window.removeEventListener("keydown", handleKeyDown)
     window.removeEventListener("keyup", handleKeyUp)
+    window.removeEventListener("mousedown", handleMouseDown)
+    window.removeEventListener("mouseup", handleMouseUp)
   }
 }
 
@@ -1074,6 +1669,7 @@ function resolveFrameInput(input: RuntimeInputState, navigatorLike: CreateRuntim
       left: input.left || gamepad.left_stick_x <= -0.35 || gamepad.dpad_left,
       right: input.right || gamepad.left_stick_x >= 0.35 || gamepad.dpad_right,
       jump: input.jump || gamepad.south,
+      fire: input.fire || gamepad.west || gamepad.right_trigger >= 0.18 || gamepad.right_bumper,
     },
   }
 }

@@ -9,9 +9,23 @@ interface SimulationViewportProps {
   active: boolean
   spec: PrototypeSpec | null
   onRuntimeError: (message: string) => void
+  promptValue?: string
+  onPromptChange?: (value: string) => void
+  onPromptSubmit?: () => void
+  promptDisabled?: boolean
+  readOnly?: boolean
 }
 
-export function SimulationViewport({ active, spec, onRuntimeError }: SimulationViewportProps) {
+export function SimulationViewport({
+  active,
+  spec,
+  onRuntimeError,
+  promptValue = "",
+  onPromptChange,
+  onPromptSubmit,
+  promptDisabled = false,
+  readOnly = false,
+}: SimulationViewportProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [snapshot, setSnapshot] = useState<RuntimeSnapshot | RuntimeSnapshot3D | null>(null)
@@ -147,6 +161,7 @@ export function SimulationViewport({ active, spec, onRuntimeError }: SimulationV
     if (!canvas || typeof canvas.requestPointerLock !== "function") return
     void canvas.requestPointerLock()
   }
+  const canSubmitPrompt = Boolean(promptValue.trim()) && !promptDisabled && !readOnly
 
   return (
     <div ref={containerRef} className="absolute inset-0 overflow-hidden rounded-3xl bg-[#08101f]">
@@ -193,6 +208,36 @@ export function SimulationViewport({ active, spec, onRuntimeError }: SimulationV
           </p>
         </div>
       )}
+      {onPromptChange && onPromptSubmit ? (
+        <form
+          onSubmit={(event) => {
+            event.preventDefault()
+            if (canSubmitPrompt) onPromptSubmit()
+          }}
+          onMouseDown={(event) => event.stopPropagation()}
+          onKeyDown={(event) => event.stopPropagation()}
+          className="lv-glass-hud absolute bottom-5 left-1/2 flex w-[min(760px,calc(100%-40px))] -translate-x-1/2 items-center gap-2 rounded-2xl border border-cyan-300/25 bg-slate-950/78 p-2 shadow-[0_18px_50px_rgba(0,0,0,0.38)]"
+        >
+          <label htmlFor="simulation-prompt" className="sr-only">
+            Prompt the current game
+          </label>
+          <input
+            id="simulation-prompt"
+            value={promptValue}
+            onChange={(event) => onPromptChange(event.target.value)}
+            disabled={promptDisabled || readOnly}
+            placeholder={readOnly ? "Prompting is disabled in demo mode" : "Prompt this game while you play..."}
+            className="min-w-0 flex-1 rounded-xl border border-white/10 bg-white/10 px-3 py-2 text-sm text-white outline-none placeholder:text-cyan-100/50 focus:border-cyan-200/60"
+          />
+          <button
+            type="submit"
+            disabled={!canSubmitPrompt}
+            className="rounded-xl bg-cyan-300 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-cyan-200 disabled:cursor-not-allowed disabled:opacity-45"
+          >
+            Apply
+          </button>
+        </form>
+      ) : null}
     </div>
   )
 }

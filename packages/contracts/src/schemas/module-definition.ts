@@ -16,6 +16,8 @@ export const moduleDefinitionSchema = z
     outputs: z.array(z.string().min(1)),
     dependencies: z.array(moduleIdSchema),
     compatible_with: z.array(moduleIdSchema),
+    capabilities: z.array(z.string().min(1)).optional(),
+    prompt_aliases: z.array(z.string().min(1)).optional(),
     config_schema: configSchemaSchema,
     version: semverSchema,
     test_status: z.enum(["passed", "pending", "failed"]).optional(),

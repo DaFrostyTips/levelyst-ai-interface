@@ -134,6 +134,25 @@ describe("capability planner", () => {
     expect(planned.blueprintPlan.gameplay_systems).toContain("systems/wave_manager")
   })
 
+  it("carries initial appearance prompts into replace-mode planned patch operations", () => {
+    const planned = planCapabilityPrompt("create a 2d platformer with enemies and make the character black")
+
+    expect(planned.blueprintPlan.game_type).toBe("2d_platformer")
+    expect(planned.blueprintPlan.required_modules).toContain("enemy/basic_enemy")
+    expect(planned.diagnostics.edit_category).toBe("appearance_patch")
+    expect(planned.diagnostics.supported_changes).toContain("Update the main character palette to black.")
+    expect(planned.diagnostics.planned_patch_operations).toContainEqual(
+      expect.objectContaining({
+        op: "update_module_config",
+        entity_id: "player_1",
+        module: "player/platformer_controller",
+        changes: expect.objectContaining({
+          body_color: "#111827",
+        }),
+      }),
+    )
+  })
+
   it("supports patch-style removal by translating capability changes back into the current slice", () => {
     const planned = planCapabilityPrompt("Remove zombies", {
       mode: "patch",
@@ -162,6 +181,32 @@ describe("capability planner", () => {
           body_color: "#ef4444",
         }),
       }),
+    )
+  })
+
+  it("keeps platformer follow-up gun prompts in the current 2D slice", () => {
+    const planned = planCapabilityPrompt("Add guns and enemies I can shoot at", {
+      mode: "patch",
+      currentBlueprint: {
+        ...basePlatformerBlueprint,
+        gameplay_systems: ["systems/coin_collectible"],
+        required_modules: [
+          "camera/side_scroll",
+          "player/platformer_controller",
+          "systems/coin_collectible",
+        ],
+      },
+    })
+
+    expect(planned.blueprintPlan.game_type).toBe("2d_platformer")
+    expect(planned.blueprintPlan.core_systems).toContain("combat/side_scroller_projectile_weapon")
+    expect(planned.blueprintPlan.required_modules).toContain("enemy/basic_enemy")
+    expect(planned.diagnostics.edit_category).toBe("mechanics_patch")
+    expect(planned.diagnostics.supported_changes).toEqual(
+      expect.arrayContaining([
+        "Add Side Scroller Projectile Weapon to the prototype.",
+        "Add Basic Enemy to the prototype.",
+      ]),
     )
   })
 

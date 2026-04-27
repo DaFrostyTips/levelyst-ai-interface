@@ -19,6 +19,7 @@ import type {
   CreateRuntimeWeb3DOptions,
   RuntimeActorSnapshot3D,
   RuntimeInputState3D,
+  RuntimePickupSnapshot3D,
   RuntimeSnapshot3D,
   RuntimeWeb3D,
   RuntimeWeb3DEvent,
@@ -104,6 +105,11 @@ interface EnemyArchetype {
   health: number
   radius: number
   height: number
+  variant: string
+  bodyColor: string
+  eyeColor: string
+  attackDamage: number
+  attackCooldownMs: number
   spawnOverride: {
     x: number
     z: number
@@ -129,7 +135,24 @@ interface RuntimeEnemy {
   modules: string[]
   moduleConfigs: PrototypeEntity["module_configs"]
   attackCooldownRemainingMs: number
+  attackDamage: number
+  attackCooldownMs: number
   moveSpeed: number
+  variant: string
+  bodyColor: string
+  eyeColor: string
+  hitFlashRemainingMs: number
+}
+
+interface RuntimePickup3D {
+  id: string
+  kind: "health" | "ammo"
+  x: number
+  y: number
+  z: number
+  radius: number
+  active: boolean
+  amount: number
 }
 
 interface RuntimeShotEffect {
@@ -170,6 +193,7 @@ interface RuntimeWorld {
   wave: RuntimeWaveState | null
   shotEffects: RuntimeShotEffect[]
   impactEffects: RuntimeImpactEffect[]
+  pickups: RuntimePickup3D[]
   muzzleFlashRemainingMs: number
   visualTheme: RuntimeVisualTheme3D
   nextEnemySequence: number
@@ -185,6 +209,18 @@ interface RuntimeVisualTheme3D {
   spawnPadPlayerColor: string
   spawnPadEnemyColor: string
   enemyColor: string
+  trimColor: string
+  pickupHealthColor: string
+  pickupAmmoColor: string
+}
+
+interface RuntimeEnemyMeshGroup {
+  body: Mesh
+  head: Mesh
+  eyeLeft: Mesh
+  eyeRight: Mesh
+  healthBarBack: Mesh
+  healthBarFill: Mesh
 }
 
 interface RendererState {
@@ -195,9 +231,11 @@ interface RendererState {
   wallMeshes: Mesh[]
   coverMeshes: Mesh[]
   spawnPadMeshes: Mesh[]
-  enemyMeshes: Map<string, Mesh>
+  enemyMeshes: Map<string, RuntimeEnemyMeshGroup>
   tracerMeshes: Map<string, Mesh>
   impactMeshes: Map<string, Mesh>
+  pickupMeshes: Map<string, Mesh>
+  weaponMeshes: Mesh[]
   environmentMeshes: Mesh[]
   muzzleFlashLight: PointLight
 }
@@ -380,6 +418,7 @@ function createWorld(spec: PrototypeSpec, emit: (event: RuntimeWeb3DEvent) => vo
       : null,
     shotEffects: [],
     impactEffects: [],
+    pickups: instantiatePickups(spec.scene.parameters, preset),
     muzzleFlashRemainingMs: 0,
     visualTheme,
     nextEnemySequence: 1,
@@ -403,6 +442,53 @@ function createWorld(spec: PrototypeSpec, emit: (event: RuntimeWeb3DEvent) => vo
   return world
 }
 
+function instantiatePickups(
+  parameters: PrototypeSpec["scene"]["parameters"],
+  preset: ScenePreset3D,
+): RuntimePickup3D[] {
+  const healthCount = clamp(toInteger(parameters.health_pickup_count, 0), 0, 6)
+  const ammoCount = clamp(toInteger(parameters.ammo_pickup_count, 0), 0, 6)
+  const anchors = [
+    { x: -16, z: -6 },
+    { x: 16, z: -6 },
+    { x: -16, z: 7 },
+    { x: 16, z: 7 },
+    { x: -2, z: 12 },
+    { x: 2, z: -2 },
+  ]
+
+  const pickups: RuntimePickup3D[] = []
+  for (let index = 0; index < healthCount; index += 1) {
+    const anchor = anchors[index % anchors.length]
+    pickups.push({
+      id: `pickup_health_${index + 1}`,
+      kind: "health",
+      x: clamp(anchor.x, preset.bounds.min_x + 1, preset.bounds.max_x - 1),
+      y: preset.floor_y + 0.45,
+      z: clamp(anchor.z, preset.bounds.min_z + 1, preset.bounds.max_z - 1),
+      radius: 0.75,
+      active: true,
+      amount: 35,
+    })
+  }
+
+  for (let index = 0; index < ammoCount; index += 1) {
+    const anchor = anchors[(index + 2) % anchors.length]
+    pickups.push({
+      id: `pickup_ammo_${index + 1}`,
+      kind: "ammo",
+      x: clamp(anchor.x + 1.4, preset.bounds.min_x + 1, preset.bounds.max_x - 1),
+      y: preset.floor_y + 0.45,
+      z: clamp(anchor.z - 1.4, preset.bounds.min_z + 1, preset.bounds.max_z - 1),
+      radius: 0.75,
+      active: true,
+      amount: 30,
+    })
+  }
+
+  return pickups
+}
+
 function instantiatePlayer(entity: PrototypeEntity, preset: ScenePreset3D): RuntimePlayer {
   const bodyConfig = entity.module_configs["physics/character_body"] ?? {}
   const controllerConfig = entity.module_configs["player/fps_controller"] ?? {}
@@ -411,6 +497,7 @@ function instantiatePlayer(entity: PrototypeEntity, preset: ScenePreset3D): Runt
   const radius = toNumber(bodyConfig.radius, 0.4)
   const height = toNumber(bodyConfig.height, 1.8)
   const magazineSize = toInteger(weaponConfig.magazine_size, 30)
+  const maxHealth = toInteger(controllerConfig.max_health, DEFAULT_PLAYER_HEALTH)
 
   return {
     id: entity.id,
@@ -431,8 +518,8 @@ function instantiatePlayer(entity: PrototypeEntity, preset: ScenePreset3D): Runt
     lookSensitivity: toNumber(controllerConfig.look_sensitivity, 0.8),
     yaw: 0,
     pitch: 0,
-    health: DEFAULT_PLAYER_HEALTH,
-    maxHealth: DEFAULT_PLAYER_HEALTH,
+    health: maxHealth,
+    maxHealth,
     fireDamage: toNumber(weaponConfig.damage, 20),
     fireCooldownMs: toInteger(weaponConfig.fire_cooldown_ms, DEFAULT_FIRE_COOLDOWN_MS),
     fireCooldownRemainingMs: 0,
@@ -459,15 +546,24 @@ function instantiateEnemyArchetype(entity: PrototypeEntity): EnemyArchetype {
   const zombieConfig = entity.module_configs["ai/basic_zombie"] ?? {}
   const bodyConfig = entity.module_configs["physics/character_body"] ?? {}
   const hasPositionOverride = typeof entity.position?.x === "number" || typeof entity.position?.y === "number"
+  const variant = toStringValue(zombieConfig.variant, "basic")
+  const variantHealthMultiplier = variant === "tank" ? 1.45 : variant === "fast" ? 0.78 : 1
+  const variantSpeedMultiplier = variant === "tank" ? 0.72 : variant === "fast" ? 1.48 : 1
+  const variantSizeMultiplier = variant === "tank" ? 1.24 : variant === "fast" ? 0.88 : 1
 
   return {
     id: entity.id,
     modules: [...entity.modules],
     moduleConfigs: entity.module_configs,
-    moveSpeed: toNumber(zombieConfig.move_speed, 1.5),
-    health: toNumber(zombieConfig.health, 60),
-    radius: toNumber(bodyConfig.radius, 0.4),
-    height: toNumber(bodyConfig.height, 1.8),
+    moveSpeed: toNumber(zombieConfig.move_speed, 1.5) * variantSpeedMultiplier,
+    health: toNumber(zombieConfig.health, 60) * variantHealthMultiplier,
+    radius: toNumber(bodyConfig.radius, 0.4) * variantSizeMultiplier,
+    height: toNumber(bodyConfig.height, 1.8) * variantSizeMultiplier,
+    variant,
+    bodyColor: toHexString(zombieConfig.body_color, "#dc2626"),
+    eyeColor: toHexString(zombieConfig.eye_color, "#fee2e2"),
+    attackDamage: toInteger(zombieConfig.attack_damage, DEFAULT_ATTACK_DAMAGE),
+    attackCooldownMs: toInteger(zombieConfig.attack_cooldown_ms, DEFAULT_ATTACK_COOLDOWN_MS),
     spawnOverride: hasPositionOverride
       ? {
           x: toNumber(entity.position?.x, 0),
@@ -492,6 +588,9 @@ function resolveVisualTheme3D(
       spawnPadPlayerColor: "#22d3ee",
       spawnPadEnemyColor: "#fb7185",
       enemyColor: "#dc2626",
+      trimColor: "#67e8f9",
+      pickupHealthColor: "#22c55e",
+      pickupAmmoColor: "#fbbf24",
     },
     neon: {
       clearColor: "#140b34",
@@ -502,6 +601,9 @@ function resolveVisualTheme3D(
       spawnPadPlayerColor: "#22d3ee",
       spawnPadEnemyColor: "#f43f5e",
       enemyColor: "#fb7185",
+      trimColor: "#22d3ee",
+      pickupHealthColor: "#34d399",
+      pickupAmmoColor: "#f0abfc",
     },
     sunset: {
       clearColor: "#7c2d12",
@@ -512,6 +614,9 @@ function resolveVisualTheme3D(
       spawnPadPlayerColor: "#fde68a",
       spawnPadEnemyColor: "#fb7185",
       enemyColor: "#f87171",
+      trimColor: "#fed7aa",
+      pickupHealthColor: "#bef264",
+      pickupAmmoColor: "#fde68a",
     },
     cyberpunk: {
       clearColor: "#12061f",
@@ -522,6 +627,9 @@ function resolveVisualTheme3D(
       spawnPadPlayerColor: "#67e8f9",
       spawnPadEnemyColor: "#fb7185",
       enemyColor: "#f43f5e",
+      trimColor: "#a855f7",
+      pickupHealthColor: "#22c55e",
+      pickupAmmoColor: "#22d3ee",
     },
     night: {
       clearColor: "#08111f",
@@ -532,6 +640,61 @@ function resolveVisualTheme3D(
       spawnPadPlayerColor: "#60a5fa",
       spawnPadEnemyColor: "#f87171",
       enemyColor: "#ef4444",
+      trimColor: "#60a5fa",
+      pickupHealthColor: "#22c55e",
+      pickupAmmoColor: "#facc15",
+    },
+    forest: {
+      clearColor: "#052e16",
+      fogColor: "#166534",
+      floorColor: "#14532d",
+      wallColor: "#166534",
+      coverColor: "#15803d",
+      spawnPadPlayerColor: "#86efac",
+      spawnPadEnemyColor: "#f97316",
+      enemyColor: "#ef4444",
+      trimColor: "#bef264",
+      pickupHealthColor: "#22c55e",
+      pickupAmmoColor: "#fef08a",
+    },
+    ice: {
+      clearColor: "#164e63",
+      fogColor: "#67e8f9",
+      floorColor: "#0e7490",
+      wallColor: "#0891b2",
+      coverColor: "#155e75",
+      spawnPadPlayerColor: "#cffafe",
+      spawnPadEnemyColor: "#38bdf8",
+      enemyColor: "#f87171",
+      trimColor: "#e0f2fe",
+      pickupHealthColor: "#67e8f9",
+      pickupAmmoColor: "#fef3c7",
+    },
+    lava: {
+      clearColor: "#450a0a",
+      fogColor: "#f97316",
+      floorColor: "#1c1917",
+      wallColor: "#7f1d1d",
+      coverColor: "#9a3412",
+      spawnPadPlayerColor: "#fdba74",
+      spawnPadEnemyColor: "#facc15",
+      enemyColor: "#fb7185",
+      trimColor: "#fb923c",
+      pickupHealthColor: "#84cc16",
+      pickupAmmoColor: "#fde68a",
+    },
+    arcade: {
+      clearColor: "#020617",
+      fogColor: "#db2777",
+      floorColor: "#0f172a",
+      wallColor: "#312e81",
+      coverColor: "#7c3aed",
+      spawnPadPlayerColor: "#22d3ee",
+      spawnPadEnemyColor: "#f472b6",
+      enemyColor: "#f43f5e",
+      trimColor: "#facc15",
+      pickupHealthColor: "#34d399",
+      pickupAmmoColor: "#f0abfc",
     },
   }
 
@@ -541,6 +704,7 @@ function resolveVisualTheme3D(
     resolved.wallColor = arenaTint
     resolved.coverColor = darkenHex(arenaTint, 0.22)
     resolved.spawnPadEnemyColor = lightenHex(arenaTint, 0.18)
+    resolved.trimColor = lightenHex(arenaTint, 0.28)
   }
   if (typeof parameters.fog_variant === "string") {
     resolved.fogColor = toVariantFogColor(parameters.fog_variant, resolved.fogColor)
@@ -715,6 +879,8 @@ function createRenderer(world: RuntimeWorld, canvas: HTMLCanvasElement | null): 
       createSpawnPadMesh(scene, `spawn_pad_${spawn.id}`, spawn.x, world.preset.floor_y + 0.03, spawn.z, world.visualTheme.spawnPadEnemyColor),
     ),
   ]
+  const decorMeshes = createArenaDecorMeshes(scene, world)
+  const weaponMeshes = createWeaponMeshes(scene, camera, world)
 
   return {
     engine,
@@ -727,9 +893,92 @@ function createRenderer(world: RuntimeWorld, canvas: HTMLCanvasElement | null): 
     enemyMeshes: new Map(),
     tracerMeshes: new Map(),
     impactMeshes: new Map(),
-    environmentMeshes: [floor, ...wallMeshes, ...coverMeshes, ...spawnPadMeshes],
+    pickupMeshes: new Map(),
+    weaponMeshes,
+    environmentMeshes: [floor, ...wallMeshes, ...coverMeshes, ...spawnPadMeshes, ...decorMeshes],
     muzzleFlashLight,
   }
+}
+
+function createArenaDecorMeshes(scene: Scene, world: RuntimeWorld) {
+  const meshes: Mesh[] = []
+  const trimColor = world.visualTheme.trimColor
+
+  for (let index = 0; index < 7; index += 1) {
+    const z = world.preset.bounds.min_z + 4 + index * 5
+    const strip = MeshBuilder.CreateBox(
+      `floor_trim_${index}`,
+      { width: world.preset.width - 8, height: 0.025, depth: 0.04 },
+      scene,
+    )
+    strip.position = new Vector3(0, world.preset.floor_y + 0.018, z)
+    strip.material = createMaterial(scene, `floor_trim_material_${index}`, trimColor, {
+      emissiveScale: 0.34,
+      alpha: 0.62,
+      specularScale: 0.02,
+    })
+    meshes.push(strip)
+  }
+
+  const pillarPositions = [
+    [-18, -10],
+    [18, -10],
+    [-18, 11],
+    [18, 11],
+  ] as const
+  pillarPositions.forEach(([x, z], index) => {
+    const pillar = MeshBuilder.CreateCylinder(
+      `arena_pillar_${index + 1}`,
+      { height: 4.6, diameter: 1.35, tessellation: 12 },
+      scene,
+    )
+    pillar.position = new Vector3(x, world.preset.floor_y + 2.3, z)
+    pillar.material = createMaterial(scene, `arena_pillar_material_${index + 1}`, world.visualTheme.coverColor, {
+      emissiveScale: 0.12,
+    })
+    meshes.push(pillar)
+
+    const cap = MeshBuilder.CreateCylinder(
+      `arena_pillar_cap_${index + 1}`,
+      { height: 0.14, diameter: 1.85, tessellation: 12 },
+      scene,
+    )
+    cap.position = new Vector3(x, world.preset.floor_y + 4.72, z)
+    cap.material = createMaterial(scene, `arena_pillar_cap_material_${index + 1}`, trimColor, {
+      emissiveScale: 0.28,
+      alpha: 0.84,
+    })
+    meshes.push(cap)
+  })
+
+  return meshes
+}
+
+function createWeaponMeshes(scene: Scene, camera: UniversalCamera, world: RuntimeWorld) {
+  const weaponConfig = world.player.moduleConfigs["combat/hitscan_weapon"] ?? {}
+  const weaponColor = toHexString(weaponConfig.weapon_color, "#334155")
+  const accentColor = toHexString(weaponConfig.muzzle_flash_color, world.player.muzzleFlashColor)
+  const body = MeshBuilder.CreateBox("first_person_weapon_body", { width: 0.26, height: 0.16, depth: 0.72 }, scene)
+  body.parent = camera
+  body.position = new Vector3(0.34, -0.28, 0.78)
+  body.rotation = new Vector3(-0.04, 0.08, 0)
+  body.material = createMaterial(scene, "first_person_weapon_body_material", weaponColor, { emissiveScale: 0.1 })
+  body.metadata = { color: weaponColor, role: "weapon_body" }
+
+  const barrel = MeshBuilder.CreateBox("first_person_weapon_barrel", { width: 0.11, height: 0.1, depth: 0.58 }, scene)
+  barrel.parent = camera
+  barrel.position = new Vector3(0.34, -0.245, 1.12)
+  barrel.material = createMaterial(scene, "first_person_weapon_barrel_material", accentColor, { emissiveScale: 0.18 })
+  barrel.metadata = { color: accentColor, role: "weapon_accent" }
+
+  const grip = MeshBuilder.CreateBox("first_person_weapon_grip", { width: 0.14, height: 0.32, depth: 0.16 }, scene)
+  grip.parent = camera
+  grip.position = new Vector3(0.29, -0.47, 0.68)
+  grip.rotation = new Vector3(0.18, 0, 0)
+  grip.material = createMaterial(scene, "first_person_weapon_grip_material", darkenHex(weaponColor, 0.22), { emissiveScale: 0.08 })
+  grip.metadata = { color: darkenHex(weaponColor, 0.22), role: "weapon_body" }
+
+  return [body, barrel, grip]
 }
 
 function renderWorld(world: RuntimeWorld, renderer: RendererState | null) {
@@ -738,6 +987,8 @@ function renderWorld(world: RuntimeWorld, renderer: RendererState | null) {
   syncEnemyMeshes(renderer, world.enemies)
   syncTracerMeshes(renderer, world.shotEffects)
   syncImpactMeshes(renderer, world.impactEffects)
+  syncPickupMeshes(renderer, world)
+  syncWeaponMeshes(renderer, world)
 
   renderer.camera.position = new Vector3(world.player.x, eyeY(world.player), world.player.z)
   renderer.camera.rotation = new Vector3(world.player.pitch, world.player.yaw, 0)
@@ -754,6 +1005,58 @@ function renderWorld(world: RuntimeWorld, renderer: RendererState | null) {
   renderer.scene.render()
 }
 
+function syncWeaponMeshes(renderer: RendererState, world: RuntimeWorld) {
+  const weaponConfig = world.player.moduleConfigs["combat/hitscan_weapon"] ?? {}
+  const bodyColor = toHexString(weaponConfig.weapon_color, "#334155")
+  const accentColor = toHexString(weaponConfig.muzzle_flash_color, world.player.muzzleFlashColor)
+
+  for (const mesh of renderer.weaponMeshes) {
+    const role = (mesh.metadata as { role?: string } | undefined)?.role
+    const nextColor = role === "weapon_accent" ? accentColor : role === "weapon_body" ? bodyColor : bodyColor
+    if ((mesh.metadata as { color?: string } | undefined)?.color === nextColor) continue
+    mesh.material = createMaterial(renderer.scene, `${mesh.name}_material_${nextColor}`, nextColor, {
+      emissiveScale: role === "weapon_accent" ? 0.2 : 0.1,
+    })
+    mesh.metadata = { ...(mesh.metadata ?? {}), color: nextColor }
+  }
+}
+
+function syncPickupMeshes(renderer: RendererState, world: RuntimeWorld) {
+  const activeIds = new Set<string>()
+
+  for (const pickup of world.pickups) {
+    if (!pickup.active) continue
+    activeIds.add(pickup.id)
+    let mesh = renderer.pickupMeshes.get(pickup.id)
+    if (!mesh) {
+      mesh =
+        pickup.kind === "health"
+          ? MeshBuilder.CreateSphere(`pickup_${pickup.id}`, { diameter: 0.72, segments: 12 }, renderer.scene)
+          : MeshBuilder.CreateBox(`pickup_${pickup.id}`, { width: 0.72, height: 0.42, depth: 0.72 }, renderer.scene)
+      renderer.pickupMeshes.set(pickup.id, mesh)
+    }
+
+    const color = pickup.kind === "health" ? world.visualTheme.pickupHealthColor : world.visualTheme.pickupAmmoColor
+    mesh.position = new Vector3(pickup.x, pickup.y + Math.sin(world.tick * 0.07) * 0.08, pickup.z)
+    mesh.rotation.y += 0.03
+    if ((mesh.metadata as { color?: string } | undefined)?.color !== color) {
+      mesh.material = createMaterial(renderer.scene, `${pickup.id}_material`, color, {
+        emissiveScale: 0.38,
+        alpha: 0.94,
+        specularScale: 0.05,
+      })
+      mesh.metadata = { color }
+    }
+    mesh.isVisible = true
+  }
+
+  for (const [pickupId, mesh] of renderer.pickupMeshes.entries()) {
+    if (activeIds.has(pickupId)) continue
+    mesh.dispose()
+    renderer.pickupMeshes.delete(pickupId)
+  }
+}
+
 function syncEnemyMeshes(renderer: RendererState, enemies: RuntimeEnemy[]) {
   const activeIds = new Set<string>()
 
@@ -761,35 +1064,73 @@ function syncEnemyMeshes(renderer: RendererState, enemies: RuntimeEnemy[]) {
     if (!enemy.active) continue
     activeIds.add(enemy.id)
 
-    let mesh = renderer.enemyMeshes.get(enemy.id)
-    if (!mesh) {
-      mesh = MeshBuilder.CreateBox(
-        `enemy_${enemy.id}`,
-        {
-          width: enemy.radius * 2,
-          height: enemy.height,
-          depth: enemy.radius * 2,
-        },
-        renderer.scene,
-      )
-      renderer.enemyMeshes.set(enemy.id, mesh)
+    let group = renderer.enemyMeshes.get(enemy.id)
+    if (!group) {
+      group = createEnemyMeshGroup(renderer, enemy)
+      renderer.enemyMeshes.set(enemy.id, group)
     }
 
-    const enemyColor = toHexString(enemy.moduleConfigs["ai/basic_zombie"]?.body_color, "#dc2626")
-    if ((mesh.metadata as { color?: string } | undefined)?.color !== enemyColor) {
-      mesh.material = createMaterial(renderer.scene, `enemy_material_${enemy.id}`, enemyColor, { emissiveScale: 0.18 })
-      mesh.metadata = { color: enemyColor }
-    }
-    mesh.position = new Vector3(enemy.x, enemy.y + enemy.height / 2, enemy.z)
-    mesh.rotation.y = Math.atan2(enemy.vx || 0.001, enemy.vz || 0.001)
-    mesh.isVisible = true
+    const bodyColor = enemy.hitFlashRemainingMs > 0 ? "#fef2f2" : enemy.bodyColor
+    syncMeshMaterial(renderer.scene, group.body, `${enemy.id}_body`, bodyColor, 0.18)
+    syncMeshMaterial(renderer.scene, group.head, `${enemy.id}_head`, lightenHex(bodyColor, 0.12), 0.2)
+    syncMeshMaterial(renderer.scene, group.eyeLeft, `${enemy.id}_eye_left`, enemy.eyeColor, 0.44)
+    syncMeshMaterial(renderer.scene, group.eyeRight, `${enemy.id}_eye_right`, enemy.eyeColor, 0.44)
+
+    const yaw = Math.atan2(enemy.vx || 0.001, enemy.vz || 0.001)
+    group.body.position = new Vector3(enemy.x, enemy.y + enemy.height * 0.44, enemy.z)
+    group.body.rotation.y = yaw
+    group.head.position = new Vector3(enemy.x, enemy.y + enemy.height * 0.86, enemy.z)
+    group.head.rotation.y = yaw
+    const eyeOffsetX = enemy.radius * 0.34
+    const eyeOffsetZ = enemy.radius * 0.78
+    group.eyeLeft.position = new Vector3(enemy.x - eyeOffsetX, enemy.y + enemy.height * 0.91, enemy.z + eyeOffsetZ)
+    group.eyeRight.position = new Vector3(enemy.x + eyeOffsetX, enemy.y + enemy.height * 0.91, enemy.z + eyeOffsetZ)
+    group.healthBarBack.position = new Vector3(enemy.x, enemy.y + enemy.height + 0.25, enemy.z)
+    group.healthBarFill.position = new Vector3(enemy.x - enemy.radius * (1 - clamp(enemy.health / enemy.maxHealth, 0, 1)), enemy.y + enemy.height + 0.27, enemy.z)
+    group.healthBarFill.scaling.x = Math.max(0.03, clamp(enemy.health / enemy.maxHealth, 0, 1))
+    const enemyMeshes = [group.body, group.head, group.eyeLeft, group.eyeRight, group.healthBarBack, group.healthBarFill]
+    enemyMeshes.forEach((mesh) => {
+      mesh.isVisible = true
+    })
   }
 
-  for (const [enemyId, mesh] of renderer.enemyMeshes.entries()) {
+  for (const [enemyId, group] of renderer.enemyMeshes.entries()) {
     if (activeIds.has(enemyId)) continue
-    mesh.dispose()
+    Object.values(group).forEach((mesh) => mesh.dispose())
     renderer.enemyMeshes.delete(enemyId)
   }
+}
+
+function createEnemyMeshGroup(renderer: RendererState, enemy: RuntimeEnemy): RuntimeEnemyMeshGroup {
+  const scene = renderer.scene
+  const body = MeshBuilder.CreateCylinder(
+    `enemy_${enemy.id}_body`,
+    { height: enemy.height * 0.72, diameterTop: enemy.radius * 1.8, diameterBottom: enemy.radius * 2.15, tessellation: 10 },
+    scene,
+  )
+  const head = MeshBuilder.CreateSphere(`enemy_${enemy.id}_head`, { diameter: enemy.radius * 1.65, segments: 12 }, scene)
+  const eyeLeft = MeshBuilder.CreateSphere(`enemy_${enemy.id}_eye_left`, { diameter: enemy.radius * 0.24, segments: 8 }, scene)
+  const eyeRight = MeshBuilder.CreateSphere(`enemy_${enemy.id}_eye_right`, { diameter: enemy.radius * 0.24, segments: 8 }, scene)
+  const healthBarBack = MeshBuilder.CreateBox(`enemy_${enemy.id}_health_back`, { width: enemy.radius * 2.2, height: 0.08, depth: 0.04 }, scene)
+  const healthBarFill = MeshBuilder.CreateBox(`enemy_${enemy.id}_health_fill`, { width: enemy.radius * 2.2, height: 0.09, depth: 0.045 }, scene)
+
+  syncMeshMaterial(scene, body, `${enemy.id}_body`, enemy.bodyColor, 0.18)
+  syncMeshMaterial(scene, head, `${enemy.id}_head`, lightenHex(enemy.bodyColor, 0.12), 0.2)
+  syncMeshMaterial(scene, eyeLeft, `${enemy.id}_eye_left`, enemy.eyeColor, 0.44)
+  syncMeshMaterial(scene, eyeRight, `${enemy.id}_eye_right`, enemy.eyeColor, 0.44)
+  syncMeshMaterial(scene, healthBarBack, `${enemy.id}_health_back`, "#111827", 0.04)
+  syncMeshMaterial(scene, healthBarFill, `${enemy.id}_health_fill`, "#fb7185", 0.22)
+
+  return { body, head, eyeLeft, eyeRight, healthBarBack, healthBarFill }
+}
+
+function syncMeshMaterial(scene: Scene, mesh: Mesh, id: string, color: string, emissiveScale: number) {
+  if ((mesh.metadata as { color?: string } | undefined)?.color === color) return
+  mesh.material = createMaterial(scene, `${id}_material_${color.replace("#", "")}`, color, {
+    emissiveScale,
+    specularScale: 0.04,
+  })
+  mesh.metadata = { ...(mesh.metadata ?? {}), color }
 }
 
 function syncTracerMeshes(renderer: RendererState, shotEffects: RuntimeShotEffect[]) {
@@ -936,6 +1277,9 @@ function advanceWorld(
   world.impactEffects = world.impactEffects
     .map((effect) => ({ ...effect, remainingMs: Math.max(0, effect.remainingMs - deltaMs) }))
     .filter((effect) => effect.remainingMs > 0)
+  for (const enemy of world.enemies) {
+    enemy.hitFlashRemainingMs = Math.max(0, enemy.hitFlashRemainingMs - deltaMs)
+  }
   const frameInput = resolveFrameInput(world.input, navigatorLike)
   world.gamepadConnected = frameInput.gamepadConnected
 
@@ -952,6 +1296,7 @@ function advanceWorld(
 
   handleWeaponFire(world, frameInput.state, emit)
   handleEnemyAttacks(world, deltaMs, emit)
+  handlePickupCollection(world, emit)
   handleRespawn(world, deltaMs, emit)
   updateWaveState(world, deltaMs, emit)
 
@@ -1156,6 +1501,7 @@ function handleWeaponFire(world: RuntimeWorld, input: RuntimeInputState3D, emit:
   if (!hitEnemy) return
 
   hitEnemy.health -= player.fireDamage
+  hitEnemy.hitFlashRemainingMs = 160
   if (hitEnemy.health > 0) return
 
   hitEnemy.active = false
@@ -1178,8 +1524,8 @@ function handleEnemyAttacks(world: RuntimeWorld, _deltaMs: number, emit: (event:
     if (distance > DEFAULT_ATTACK_RANGE) continue
     if (enemy.attackCooldownRemainingMs > 0) continue
 
-    enemy.attackCooldownRemainingMs = DEFAULT_ATTACK_COOLDOWN_MS
-    world.player.health = Math.max(0, world.player.health - DEFAULT_ATTACK_DAMAGE)
+    enemy.attackCooldownRemainingMs = enemy.attackCooldownMs
+    world.player.health = Math.max(0, world.player.health - enemy.attackDamage)
     emit({
       type: "player_damaged",
       health: world.player.health,
@@ -1189,6 +1535,24 @@ function handleEnemyAttacks(world: RuntimeWorld, _deltaMs: number, emit: (event:
       world.player.active = false
       world.player.respawnRemainingMs = world.player.respawnDelayMs
     }
+  }
+}
+
+function handlePickupCollection(world: RuntimeWorld, emit: (event: RuntimeWeb3DEvent) => void) {
+  if (!world.player.active) return
+
+  for (const pickup of world.pickups) {
+    if (!pickup.active) continue
+    const distance = Math.hypot(world.player.x - pickup.x, world.player.z - pickup.z)
+    if (distance > pickup.radius + world.player.radius) continue
+
+    pickup.active = false
+    if (pickup.kind === "health") {
+      world.player.health = Math.min(world.player.maxHealth, world.player.health + pickup.amount)
+    } else {
+      world.player.reserveAmmo += pickup.amount
+    }
+    emit({ type: "pickup_collected", pickup_id: pickup.id, pickup_kind: pickup.kind })
   }
 }
 
@@ -1293,7 +1657,13 @@ function spawnEnemy(
     modules: [...archetype.modules],
     moduleConfigs: archetype.moduleConfigs,
     attackCooldownRemainingMs: 0,
+    attackDamage: archetype.attackDamage,
+    attackCooldownMs: archetype.attackCooldownMs,
     moveSpeed: archetype.moveSpeed,
+    variant: archetype.variant,
+    bodyColor: archetype.bodyColor,
+    eyeColor: archetype.eyeColor,
+    hitFlashRemainingMs: 0,
   }
 }
 
@@ -1400,6 +1770,14 @@ function createSnapshot(world: RuntimeWorld, running: boolean): RuntimeSnapshot3
           next_wave_in_ms: world.wave.nextWaveInMs,
         }
       : null,
+    pickups: world.pickups.map<RuntimePickupSnapshot3D>((pickup) => ({
+      id: pickup.id,
+      kind: pickup.kind,
+      x: pickup.x,
+      y: pickup.y,
+      z: pickup.z,
+      active: pickup.active,
+    })),
     pointer_locked: world.pointerLocked,
     gamepad_connected: world.gamepadConnected,
   }

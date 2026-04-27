@@ -112,6 +112,8 @@ export interface BlueprintSystemItem {
 
 export interface IntentBlueprint {
   gameType: string
+  familyId?: string
+  capabilityIds?: string[]
   gameTypeLabel: string
   gameIdea: string
   playerExperience: string

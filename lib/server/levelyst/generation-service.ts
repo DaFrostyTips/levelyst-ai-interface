@@ -7,8 +7,9 @@ import {
   type GenerationJob,
   type GenerationJobEvent,
   type ProjectDetail,
+  type PrototypeSpec,
 } from "@levelyst/contracts"
-import { PrototypeSpecCompiler } from "@levelyst/spec-compiler"
+import { applyPatchOperation, PrototypeSpecCompiler } from "@levelyst/spec-compiler"
 import { createSeededModuleRegistry } from "@levelyst/module-registry"
 import { buildModuleGraph } from "./graph-builder-service"
 import { humanizeModuleId, summarizeModuleGraph } from "./defaults"
@@ -103,7 +104,7 @@ async function attemptPromptModeGeneration(
     const diagnostics = project.workspace_json.pending_blueprint_diagnostics
     const plannedPatchOperations = diagnostics?.planned_patch_operations ?? []
     const derivedPatchOperations = derivePatchOperations(project, blueprintPlan) ?? []
-    const patchOperations = [...plannedPatchOperations, ...derivedPatchOperations]
+    const patchOperations = [...derivedPatchOperations, ...plannedPatchOperations]
 
     if (patchOperations.length === 0 && (diagnostics?.supported_changes.length ?? 0) === 0) {
       throw new Error("That prompt does not map to a supported prototype change yet. Try one of the suggested follow-up prompts.")
@@ -134,7 +135,11 @@ async function attemptPromptModeGeneration(
   }
 
   const builtGraph = buildModuleGraph(blueprintPlan, project.module_graph)
-  const prototypeSpec = PrototypeSpecCompiler.compile(blueprintPlan, builtGraph.resolved_modules)
+  const compiledPrototypeSpec = PrototypeSpecCompiler.compile(blueprintPlan, builtGraph.resolved_modules)
+  const prototypeSpec = applySafePlannedOperations(
+    compiledPrototypeSpec,
+    project.workspace_json.pending_blueprint_diagnostics?.planned_patch_operations ?? [],
+  )
   const nextWorkspace = buildWorkspaceSnapshot(project, blueprintPlan, builtGraph.module_graph)
   const updatedProject = await repository.updateProject(project.id, {
     runtime_target: blueprintPlan.constraints.target_runtime,
@@ -149,6 +154,16 @@ async function attemptPromptModeGeneration(
     project: updatedProject,
     orderedModuleIds: builtGraph.resolved_modules.ordered_modules.map((module) => module.id),
   }
+}
+
+function applySafePlannedOperations(spec: PrototypeSpec, operations: PatchOperation[]) {
+  return operations.reduce((currentSpec, operation) => {
+    try {
+      return applyPatchOperation(currentSpec, operation, { registry: moduleRegistry })
+    } catch {
+      return currentSpec
+    }
+  }, spec)
 }
 
 function buildGenerationEvents(
@@ -305,7 +320,15 @@ function derivePatchOperations(project: ProjectDetail, nextBlueprint: BlueprintP
   for (const moduleId of removedModuleIds) {
     const module = moduleRegistry.getModule(moduleId)
     if (!module) continue
-    if (module.category === "enemy_ai") return null
+    if (module.category === "enemy_ai") {
+      const entityId = findEntityIdForModule(currentSpec, moduleId)
+      if (!entityId) return null
+      operations.push({
+        op: "remove_entity",
+        entity_id: entityId,
+      })
+      continue
+    }
 
     if (module.category === "systems" || module.category === "ui") {
       operations.push({
@@ -330,7 +353,18 @@ function derivePatchOperations(project: ProjectDetail, nextBlueprint: BlueprintP
   for (const moduleId of addedModuleIds) {
     const module = moduleRegistry.getModule(moduleId)
     if (!module) continue
-    if (module.category === "enemy_ai") return null
+    if (module.category === "enemy_ai") {
+      operations.push({
+        op: "add_entity",
+        entity: {
+          id: createEntityIdForModule(currentSpec, moduleId),
+          kind: "enemy",
+          modules: [moduleId],
+          module_configs: {},
+        },
+      })
+      continue
+    }
 
     if (module.category === "systems" || module.category === "ui") {
       operations.push({
@@ -369,6 +403,20 @@ function derivePatchOperations(project: ProjectDetail, nextBlueprint: BlueprintP
   }
 
   return operations
+}
+
+function createEntityIdForModule(spec: NonNullable<ProjectDetail["prototype_spec"]>, moduleId: string) {
+  const base = moduleId.includes("zombie") ? "enemy_zombie" : "enemy"
+  let index = spec.entities.filter((entity) => entity.kind === "enemy").length + 1
+  let candidate = `${base}_${index}`
+
+  const existingIds = new Set(spec.entities.map((entity) => entity.id))
+  while (existingIds.has(candidate)) {
+    index += 1
+    candidate = `${base}_${index}`
+  }
+
+  return candidate
 }
 
 function findEntityIdForModule(spec: NonNullable<ProjectDetail["prototype_spec"]>, moduleId: string) {

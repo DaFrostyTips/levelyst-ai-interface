@@ -36,6 +36,15 @@ export interface RuntimeWaveSnapshot3D {
   next_wave_in_ms: number | null
 }
 
+export interface RuntimePickupSnapshot3D {
+  id: string
+  kind: "health" | "ammo"
+  x: number
+  y: number
+  z: number
+  active: boolean
+}
+
 export interface RuntimeSnapshot3D {
   tick: number
   running: boolean
@@ -60,6 +69,7 @@ export interface RuntimeSnapshot3D {
   }) | null
   enemies: RuntimeActorSnapshot3D[]
   wave: RuntimeWaveSnapshot3D | null
+  pickups: RuntimePickupSnapshot3D[]
   pointer_locked: boolean
   gamepad_connected: boolean
 }
@@ -73,6 +83,7 @@ export type RuntimeWeb3DEvent =
   | { type: "weapon_fired"; hit: boolean; tracer_style: string }
   | { type: "enemy_defeated"; enemy_id: string; wave_index: number }
   | { type: "player_damaged"; health: number }
+  | { type: "pickup_collected"; pickup_id: string; pickup_kind: "health" | "ammo" }
   | { type: "player_respawned" }
   | { type: "reload_completed"; ammo_in_magazine: number; reserve_ammo: number }
   | { type: "runtime_error"; message: string }

@@ -10,7 +10,8 @@ describe("editor-v2 adapter", () => {
   })
 
   it("builds a blueprint catalog from the registry-backed templates", () => {
-    expect(editorModuleTemplates).toHaveLength(11)
+    expect(editorModuleTemplates).toHaveLength(12)
+    expect(editorBlueprintCatalog.some((item) => item.typeId === "combat/side_scroller_projectile_weapon")).toBe(true)
     expect(editorBlueprintCatalog.some((item) => item.typeId === "systems/wave_manager")).toBe(true)
   })
 })

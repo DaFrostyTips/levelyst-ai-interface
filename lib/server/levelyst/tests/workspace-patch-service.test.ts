@@ -6,6 +6,7 @@ import { createLevelystRepository } from "@/lib/server/levelyst/project-reposito
 import { planPrompt } from "@/lib/server/levelyst/planner-service"
 import { generatePrototypeForProject } from "@/lib/server/levelyst/generation-service"
 import { patchProjectSpec } from "@/lib/server/levelyst/workspace-patch-service"
+import { planProjectPromptReview } from "@/lib/server/levelyst/prompt-review-service"
 
 describe("workspace patch service", () => {
   let dbDir = ""
@@ -95,5 +96,79 @@ describe("workspace patch service", () => {
     expect(movedWorkspaceNode).toMatchObject({ x: 920, y: 460 })
     expect(movedGraphNode?.position).toEqual({ x: 920, y: 460 })
     expect(patched.prototype_spec).toEqual(originalSpec)
+  })
+
+  it("adds a projectile combat module and enemy entity without rebuilding the whole project", async () => {
+    const repository = createLevelystRepository(path.join(dbDir, "combat-patch.sqlite"))
+    const project = await repository.createProject({
+      name: "Combat Patch",
+      runtime_target: "web_2d",
+    })
+    const blueprint = await planPrompt("Create a 2D platformer with coins")
+    await repository.updateProject(project.id, {
+      blueprint_json: blueprint,
+      workspace_json: {
+        ...project.workspace_json,
+        prompt: "Create a 2D platformer with coins",
+      },
+    })
+
+    const generated = (await generatePrototypeForProject(repository, project.id)).project
+    const playerPosition = generated.module_graph?.nodes.find((node) => node.module_id === "player/platformer_controller")?.position
+
+    const patched = await patchProjectSpec(repository, project.id, [
+      {
+        op: "add_module",
+        entity_id: "player_1",
+        module: "combat/side_scroller_projectile_weapon",
+        changes: {},
+      },
+      {
+        op: "add_entity",
+        entity: {
+          id: "enemy_1",
+          kind: "enemy",
+          modules: ["enemy/basic_enemy"],
+          module_configs: {},
+        },
+      },
+    ])
+
+    const player = patched.prototype_spec?.entities.find((entity) => entity.id === "player_1")
+    const enemy = patched.prototype_spec?.entities.find((entity) => entity.id === "enemy_1")
+    const movedPlayerNode = patched.module_graph?.nodes.find((node) => node.module_id === "player/platformer_controller")
+
+    expect(player?.modules).toContain("combat/side_scroller_projectile_weapon")
+    expect(enemy?.modules).toEqual(["physics/gravity", "enemy/basic_enemy"])
+    expect(patched.blueprint_json?.required_modules).toContain("combat/side_scroller_projectile_weapon")
+    expect(patched.blueprint_json?.required_modules).toContain("enemy/basic_enemy")
+    expect(movedPlayerNode?.position).toEqual(playerPosition)
+  })
+
+  it("applies replace-mode planned prompt patches to the first compiled spec", async () => {
+    const repository = createLevelystRepository(path.join(dbDir, "replace-prompt-patch.sqlite"))
+    const project = await repository.createProject({
+      name: "Initial Appearance",
+      runtime_target: "web_2d",
+    })
+    const prompt = "create a 2d platformer with enemies and make the character black"
+    const review = await planProjectPromptReview(prompt)
+
+    await repository.updateProject(project.id, {
+      workspace_json: {
+        ...project.workspace_json,
+        prompt,
+        pending_blueprint: review.blueprintPlan,
+        pending_blueprint_diagnostics: review.diagnostics,
+        pending_prompt_mode: review.mode,
+        blueprint_state: "review",
+      },
+    })
+
+    const generated = (await generatePrototypeForProject(repository, project.id)).project
+    const player = generated.prototype_spec?.entities.find((entity) => entity.id === "player_1")
+
+    expect(generated.blueprint_json?.required_modules).toContain("enemy/basic_enemy")
+    expect(player?.module_configs["player/platformer_controller"]?.body_color).toBe("#111827")
   })
 })

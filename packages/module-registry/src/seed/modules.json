@@ -6,7 +6,9 @@
     "inputs": ["keyboard"],
     "outputs": ["transform", "velocity", "jump_state"],
     "dependencies": ["physics/gravity"],
-    "compatible_with": ["camera/side_scroll", "systems/checkpoint", "systems/coin_collectible", "enemy/basic_enemy"],
+    "compatible_with": ["camera/side_scroll", "combat/side_scroller_projectile_weapon", "systems/checkpoint", "systems/coin_collectible", "enemy/basic_enemy"],
+    "capabilities": ["movement.side_scroll", "physics.gravity"],
+    "prompt_aliases": ["platformer", "mario", "jump", "run", "side scroll"],
     "config_schema": {
       "move_speed": {
         "type": "number",
@@ -19,6 +21,29 @@
         "default": 12,
         "min": 1,
         "max": 30
+      },
+      "body_color": {
+        "type": "string",
+        "default": "#58acff"
+      },
+      "accent_color": {
+        "type": "string",
+        "default": "#b9e5ff"
+      },
+      "outline_color": {
+        "type": "string",
+        "default": "#0f172a"
+      },
+      "size_class": {
+        "type": "enum",
+        "default": "medium",
+        "enum": ["small", "medium", "large"]
+      },
+      "max_health": {
+        "type": "integer",
+        "default": 3,
+        "min": 1,
+        "max": 12
       }
     },
     "version": "1.0.0",
@@ -32,6 +57,8 @@
     "outputs": ["velocity", "grounded_state"],
     "dependencies": [],
     "compatible_with": ["player/platformer_controller", "enemy/basic_enemy"],
+    "capabilities": ["physics.gravity"],
+    "prompt_aliases": ["gravity", "jump", "fall"],
     "config_schema": {
       "gravity_scale": {
         "type": "number",
@@ -51,6 +78,8 @@
     "outputs": ["camera_frame"],
     "dependencies": ["player/platformer_controller"],
     "compatible_with": ["player/platformer_controller"],
+    "capabilities": ["movement.side_scroll"],
+    "prompt_aliases": ["camera", "side scroll", "follow"],
     "config_schema": {
       "follow_lag": {
         "type": "number",
@@ -69,13 +98,44 @@
     "inputs": ["player_transform", "grounded_state"],
     "outputs": ["enemy_state", "damage_events"],
     "dependencies": ["physics/gravity"],
-    "compatible_with": ["player/platformer_controller"],
+    "compatible_with": ["player/platformer_controller", "combat/side_scroller_projectile_weapon"],
+    "capabilities": ["ai.enemy_basic"],
+    "prompt_aliases": ["enemy", "enemies", "monster", "shoot at"],
     "config_schema": {
       "move_speed": {
         "type": "number",
         "default": 2.5,
         "min": 0.5,
         "max": 8
+      },
+      "health": {
+        "type": "integer",
+        "default": 2,
+        "min": 1,
+        "max": 20
+      },
+      "contact_damage": {
+        "type": "integer",
+        "default": 1,
+        "min": 1,
+        "max": 6
+      },
+      "body_color": {
+        "type": "string",
+        "default": "#ff7078"
+      },
+      "accent_color": {
+        "type": "string",
+        "default": "#ffc8cc"
+      },
+      "outline_color": {
+        "type": "string",
+        "default": "#3f1217"
+      },
+      "variant": {
+        "type": "enum",
+        "default": "patrol",
+        "enum": ["patrol", "fast", "tank"]
       }
     },
     "version": "1.0.0",
@@ -89,6 +149,8 @@
     "outputs": ["respawn_point"],
     "dependencies": ["player/platformer_controller"],
     "compatible_with": ["player/platformer_controller"],
+    "capabilities": ["progression.checkpoint"],
+    "prompt_aliases": ["checkpoint", "checkpoints", "respawn"],
     "config_schema": {
       "respawn_delay_ms": {
         "type": "integer",
@@ -108,12 +170,55 @@
     "outputs": ["score_events"],
     "dependencies": [],
     "compatible_with": ["player/platformer_controller"],
+    "capabilities": ["interaction.pickup"],
+    "prompt_aliases": ["coin", "coins", "pickup", "collectible"],
     "config_schema": {
       "value": {
         "type": "integer",
         "default": 1,
         "min": 1,
         "max": 100
+      }
+    },
+    "version": "1.0.0",
+    "test_status": "passed"
+  },
+  {
+    "id": "combat/side_scroller_projectile_weapon",
+    "category": "combat",
+    "engine_target": "web_2d",
+    "inputs": ["keyboard", "player_transform"],
+    "outputs": ["damage_events", "projectile_traces"],
+    "dependencies": ["player/platformer_controller"],
+    "compatible_with": ["enemy/basic_enemy"],
+    "capabilities": ["combat.projectile"],
+    "prompt_aliases": ["gun", "guns", "shoot", "shooting", "bullet", "bullets", "projectile", "projectiles"],
+    "config_schema": {
+      "damage": {
+        "type": "integer",
+        "default": 1,
+        "min": 1,
+        "max": 10
+      },
+      "fire_cooldown_ms": {
+        "type": "integer",
+        "default": 260,
+        "min": 80,
+        "max": 1200
+      },
+      "projectile_speed": {
+        "type": "number",
+        "default": 820,
+        "min": 160,
+        "max": 1800
+      },
+      "projectile_color": {
+        "type": "string",
+        "default": "#fbbf24"
+      },
+      "muzzle_color": {
+        "type": "string",
+        "default": "#fde68a"
       }
     },
     "version": "1.0.0",
@@ -127,6 +232,8 @@
     "outputs": ["transform", "camera_pose", "velocity"],
     "dependencies": ["physics/character_body"],
     "compatible_with": ["combat/hitscan_weapon", "systems/wave_manager"],
+    "capabilities": ["movement.first_person"],
+    "prompt_aliases": ["fps", "first person", "shooter"],
     "config_schema": {
       "move_speed": {
         "type": "number",
@@ -139,6 +246,12 @@
         "default": 0.8,
         "min": 0.1,
         "max": 4
+      },
+      "max_health": {
+        "type": "integer",
+        "default": 100,
+        "min": 10,
+        "max": 300
       }
     },
     "version": "1.0.0",
@@ -152,6 +265,8 @@
     "outputs": ["damage_events", "projectile_traces"],
     "dependencies": ["player/fps_controller"],
     "compatible_with": ["ai/basic_zombie", "systems/wave_manager"],
+    "capabilities": ["combat.hitscan"],
+    "prompt_aliases": ["gun", "guns", "shoot", "shooting", "weapon", "bullets"],
     "config_schema": {
       "damage": {
         "type": "number",
@@ -164,6 +279,40 @@
         "default": 30,
         "min": 1,
         "max": 120
+      },
+      "fire_cooldown_ms": {
+        "type": "integer",
+        "default": 160,
+        "min": 60,
+        "max": 1200
+      },
+      "reload_duration_ms": {
+        "type": "integer",
+        "default": 1400,
+        "min": 250,
+        "max": 5000
+      },
+      "tracer_style": {
+        "type": "enum",
+        "default": "default",
+        "enum": ["default", "bright_tracer"]
+      },
+      "tracer_color": {
+        "type": "string",
+        "default": "#fb923c"
+      },
+      "muzzle_flash_color": {
+        "type": "string",
+        "default": "#fde68a"
+      },
+      "impact_fx_style": {
+        "type": "enum",
+        "default": "default",
+        "enum": ["default", "spark_burst", "none"]
+      },
+      "weapon_color": {
+        "type": "string",
+        "default": "#334155"
       }
     },
     "version": "1.0.0",
@@ -177,6 +326,8 @@
     "outputs": ["enemy_state", "damage_events"],
     "dependencies": ["physics/character_body"],
     "compatible_with": ["combat/hitscan_weapon", "systems/wave_manager"],
+    "capabilities": ["ai.enemy_basic"],
+    "prompt_aliases": ["zombie", "zombies", "enemy", "enemies"],
     "config_schema": {
       "move_speed": {
         "type": "number",
@@ -189,6 +340,31 @@
         "default": 60,
         "min": 1,
         "max": 500
+      },
+      "body_color": {
+        "type": "string",
+        "default": "#dc2626"
+      },
+      "eye_color": {
+        "type": "string",
+        "default": "#fee2e2"
+      },
+      "variant": {
+        "type": "enum",
+        "default": "basic",
+        "enum": ["basic", "fast", "tank"]
+      },
+      "attack_damage": {
+        "type": "integer",
+        "default": 10,
+        "min": 1,
+        "max": 60
+      },
+      "attack_cooldown_ms": {
+        "type": "integer",
+        "default": 800,
+        "min": 200,
+        "max": 4000
       }
     },
     "version": "1.0.0",
@@ -202,6 +378,8 @@
     "outputs": ["spawn_events", "wave_state"],
     "dependencies": ["ai/basic_zombie"],
     "compatible_with": ["combat/hitscan_weapon", "player/fps_controller"],
+    "capabilities": ["progression.wave", "systems.wave_spawner"],
+    "prompt_aliases": ["wave", "waves", "survival", "spawner"],
     "config_schema": {
       "starting_wave_size": {
         "type": "integer",
@@ -227,6 +405,8 @@
     "outputs": ["collision_events", "grounded_state"],
     "dependencies": [],
     "compatible_with": ["player/fps_controller", "ai/basic_zombie"],
+    "capabilities": ["physics.gravity"],
+    "prompt_aliases": ["body", "collision", "physics"],
     "config_schema": {
       "height": {
         "type": "number",

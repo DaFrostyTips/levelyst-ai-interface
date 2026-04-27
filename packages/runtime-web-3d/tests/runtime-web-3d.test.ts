@@ -347,6 +347,45 @@ describe("@levelyst/runtime-web-3d", () => {
     })
   })
 
+  it("supports arena pickups and enemy variants from promptable config", () => {
+    const spec = cloneSpec(compileFpsSpec({ withWaveManager: false }))
+    spec.scene.parameters = {
+      ...spec.scene.parameters,
+      visual_theme: "lava",
+      health_pickup_count: 1,
+      ammo_pickup_count: 1,
+    }
+    patchEntityModuleConfig(spec, "enemy_1", "ai/basic_zombie", {
+      variant: "tank",
+      health: 100,
+      body_color: "#111827",
+    })
+    spec.entities = spec.entities.map((entity) =>
+      entity.id === "player_1"
+        ? {
+            ...entity,
+            position: { x: -16, y: -6 },
+          }
+        : entity,
+    )
+
+    const events: string[] = []
+    const runtime = createRuntimeWeb3D({
+      spec,
+      onEvent(event) {
+        events.push(event.type)
+      },
+    })
+    const before = runtime.getSnapshot()
+    runtime.step()
+    const after = runtime.getSnapshot()
+
+    expect(before.pickups).toHaveLength(2)
+    expect(before.enemies[0]?.health).toBeGreaterThan(100)
+    expect(after.pickups.find((pickup) => pickup.kind === "health")?.active).toBe(false)
+    expect(events).toContain("pickup_collected")
+  })
+
   it("spawns the initial wave and advances to the next wave after the current one is cleared", () => {
     const spec = cloneSpec(compileFpsSpec())
     patchEntityModuleConfig(spec, "player_1", "combat/hitscan_weapon", {

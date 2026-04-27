@@ -189,6 +189,8 @@ function cloneModuleDefinition(module: ModuleDefinition): ModuleDefinition {
     outputs: [...module.outputs],
     dependencies: [...module.dependencies],
     compatible_with: [...module.compatible_with],
+    capabilities: module.capabilities ? [...module.capabilities] : undefined,
+    prompt_aliases: module.prompt_aliases ? [...module.prompt_aliases] : undefined,
     config_schema: Object.fromEntries(
       Object.entries(module.config_schema).map(([key, value]) => [
         key,
