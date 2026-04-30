@@ -1937,7 +1937,7 @@ function resolveFrameInput(input: RuntimeInputState3D, navigatorLike: CreateRunt
       jump: input.jump || gamepad.south,
       fire: input.fire || gamepad.right_trigger >= 0.18 || gamepad.right_bumper,
       reload: input.reload || gamepad.west,
-      look_delta_x: input.look_delta_x + gamepad.right_stick_x * 12,
+      look_delta_x: input.look_delta_x - gamepad.right_stick_x * 12,
       look_delta_y: input.look_delta_y + gamepad.right_stick_y * 12,
     },
   }

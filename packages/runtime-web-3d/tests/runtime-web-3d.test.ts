@@ -242,7 +242,7 @@ describe("@levelyst/runtime-web-3d", () => {
     const afterMove = moveRuntime.getSnapshot()
     expect(afterMove.gamepad_connected).toBe(true)
     expect(afterMove.player?.z).toBeGreaterThan(beforeMove.player?.z ?? 0)
-    expect(afterMove.scene.camera.yaw).not.toBe(beforeMove.scene.camera.yaw)
+    expect(afterMove.scene.camera.yaw).toBeGreaterThan(beforeMove.scene.camera.yaw)
 
     const actionController = createMutableGamepadNavigator()
     const actionRuntime = createRuntimeWeb3D({ spec, navigatorLike: actionController.navigatorLike })
