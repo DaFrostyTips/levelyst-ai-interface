@@ -166,8 +166,8 @@ function aimAtEnemy(runtime: ReturnType<typeof createRuntimeWeb3D>) {
   const sensitivityFactor = 0.8 * 0.0025
 
   runtime.step(undefined, {
-    look_delta_x: (desiredYaw - origin.yaw) / sensitivityFactor,
-    look_delta_y: -(desiredPitch - origin.pitch) / sensitivityFactor,
+    look_delta_x: (origin.yaw - desiredYaw) / sensitivityFactor,
+    look_delta_y: (desiredPitch - origin.pitch) / sensitivityFactor,
   })
 }
 
@@ -207,8 +207,8 @@ describe("@levelyst/runtime-web-3d", () => {
 
     const afterMove = runtime.getSnapshot()
     expect(afterMove.player?.z).toBeGreaterThan(beforeMove.player?.z ?? 0)
-    expect(afterMove.scene.camera.yaw).not.toBe(beforeMove.scene.camera.yaw)
-    expect(afterMove.scene.camera.pitch).not.toBe(beforeMove.scene.camera.pitch)
+    expect(afterMove.scene.camera.yaw).toBeLessThan(beforeMove.scene.camera.yaw)
+    expect(afterMove.scene.camera.pitch).toBeLessThan(beforeMove.scene.camera.pitch)
   })
 
   it("supports controller move, look, fire, reload, and jump inputs", () => {

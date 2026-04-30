@@ -157,6 +157,7 @@ import {
   createPresentationSyncMessage,
   KIOSK_IDLE_RESET_MS,
   PRESENTATION_CHANNEL_NAME,
+  publishPresentationSyncMessage,
   type PresentationSyncReason,
 } from "@/lib/levelyst/presentation-sync"
 import { cn } from "@/lib/utils"
@@ -571,7 +572,7 @@ export function LevelystWorkbench({
 
   const broadcastPresentationState = useCallback(
     (input: Parameters<typeof createPresentationSyncMessage>[0]) => {
-      presentationChannelRef.current?.postMessage(createPresentationSyncMessage(input))
+      publishPresentationSyncMessage(presentationChannelRef.current, input)
     },
     [],
   )

@@ -1,13 +1,22 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import type { ProjectDetail, PrototypeSpec } from "@levelyst/contracts"
 import { useRouter } from "next/navigation"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { getProject, getProjectSpec } from "@/lib/levelyst/api-client"
 import { hydrateIntentBlueprint } from "@/lib/levelyst/client-mappers"
-import { normalizePresentationSyncMessage, PRESENTATION_CHANNEL_NAME } from "@/lib/levelyst/presentation-sync"
+import {
+  createPrototypeSpecFingerprint,
+  isNewerPresentationSyncMessage,
+  normalizePresentationSyncMessage,
+  PRESENTATION_CHANNEL_NAME,
+  PRESENTATION_STATE_STORAGE_KEY,
+  readPresentationSyncMessage,
+  type PresentationSyncMessage,
+  type PresentationSyncReason,
+} from "@/lib/levelyst/presentation-sync"
 import { SimulationViewport } from "@/components/editor-v2/simulation-viewport"
 
 interface PresentationScreenProps {
@@ -16,13 +25,18 @@ interface PresentationScreenProps {
 
 export function PresentationScreen({ initialProject }: PresentationScreenProps) {
   const router = useRouter()
+  const initialSpecFingerprint = createPrototypeSpecFingerprint(initialProject.prototype_spec)
   const [project, setProject] = useState(initialProject)
   const [spec, setSpec] = useState<PrototypeSpec | null>(initialProject.prototype_spec)
   const [presentationMode, setPresentationMode] = useState<"project" | "home">(
     initialProject.prototype_spec ? "project" : "home",
   )
   const [runtimeError, setRuntimeError] = useState<string | null>(null)
-  const [refreshTick, setRefreshTick] = useState(0)
+  const specIdentityRef = useRef({
+    projectId: initialProject.id,
+    fingerprint: initialSpecFingerprint,
+  })
+  const lastSyncTimestampRef = useRef<number | null>(null)
 
   const blueprint = useMemo(
     () =>
@@ -36,40 +50,64 @@ export function PresentationScreen({ initialProject }: PresentationScreenProps) 
     [project.blueprint_json, project.workspace_json.pending_blueprint_diagnostics, project.workspace_json.prompt],
   )
 
-  const refreshProject = useCallback(async (projectId = project.id) => {
-    try {
-      const { project: nextProject } = await getProject(projectId)
+  const refreshProject = useCallback(
+    async (projectId = project.id) => {
+      try {
+        const { project: nextProject } = await getProject(projectId)
 
-      let nextSpec = nextProject.prototype_spec
-      if (!nextSpec) {
-        const specResponse = await getProjectSpec(projectId)
-        nextSpec = specResponse.prototype_spec
-      }
+        let nextSpec = nextProject.prototype_spec
+        if (!nextSpec) {
+          const specResponse = await getProjectSpec(projectId)
+          nextSpec = specResponse.prototype_spec
+        }
 
-      if (!nextSpec) {
+        if (!nextSpec) {
+          specIdentityRef.current = {
+            projectId: nextProject.id,
+            fingerprint: null,
+          }
+          setProject({
+            ...nextProject,
+            prototype_spec: null,
+          })
+          setSpec(null)
+          setRuntimeError(null)
+          setPresentationMode("home")
+          return
+        }
+
+        const nextFingerprint = createPrototypeSpecFingerprint(nextSpec)
+        const shouldReplaceRuntimeSpec =
+          specIdentityRef.current.projectId !== nextProject.id ||
+          specIdentityRef.current.fingerprint !== nextFingerprint
+
         setProject({
           ...nextProject,
-          prototype_spec: null,
+          prototype_spec: nextSpec,
         })
-        setSpec(null)
-        setRuntimeError(null)
-        setPresentationMode("home")
-        return
-      }
 
-      setProject({
-        ...nextProject,
-        prototype_spec: nextSpec,
-      })
-      setSpec(nextSpec)
-      setRuntimeError(null)
-      setPresentationMode("project")
-    } catch (error) {
-      setSpec(null)
-      setPresentationMode("home")
-      setRuntimeError(error instanceof Error ? error.message : "Presentation refresh failed.")
-    }
-  }, [project.id])
+        if (shouldReplaceRuntimeSpec) {
+          specIdentityRef.current = {
+            projectId: nextProject.id,
+            fingerprint: nextFingerprint,
+          }
+          setSpec(nextSpec)
+        }
+
+        setRuntimeError(null)
+        setPresentationMode("project")
+      } catch (error) {
+        specIdentityRef.current = {
+          projectId,
+          fingerprint: null,
+        }
+        setSpec(null)
+        setPresentationMode("home")
+        setRuntimeError(error instanceof Error ? error.message : "Presentation refresh failed.")
+      }
+    },
+    [project.id],
+  )
 
   useEffect(() => {
     let cancelled = false
@@ -79,14 +117,9 @@ export function PresentationScreen({ initialProject }: PresentationScreenProps) 
       await refreshProject(projectId)
     }
 
-    const channel =
-      typeof window !== "undefined" && typeof BroadcastChannel !== "undefined"
-        ? new BroadcastChannel(PRESENTATION_CHANNEL_NAME)
-        : null
-
-    const handleSync = (event: MessageEvent) => {
-      const message = normalizePresentationSyncMessage(event.data)
-      if (!message) return
+    const handleSyncMessage = (message: PresentationSyncMessage) => {
+      if (!isNewerPresentationSyncMessage(message, lastSyncTimestampRef.current)) return
+      lastSyncTimestampRef.current = message.timestamp
 
       if (message.state === "home") {
         setPresentationMode("home")
@@ -94,29 +127,67 @@ export function PresentationScreen({ initialProject }: PresentationScreenProps) 
         return
       }
 
+      if (!message.projectId) return
+
       if (message.projectId !== project.id) {
         router.replace(`/present/${message.projectId}/`)
         void safeRefreshProject(message.projectId)
         return
       }
 
-      void safeRefreshProject(message.projectId)
+      if (message.hasPrototype === false && shouldShowHomeForProjectSync(message.reason)) {
+        setPresentationMode("home")
+        setRuntimeError(null)
+        return
+      }
+
+      if (shouldRefreshProjectForSync(message.reason)) {
+        void safeRefreshProject(message.projectId)
+      }
     }
 
-    channel?.addEventListener("message", handleSync)
-    const intervalId = window.setInterval(() => {
-      if (presentationMode === "project") {
-        void safeRefreshProject(project.id)
+    const handleStoredSyncMessage = () => {
+      const storedMessage = readPresentationSyncMessage()
+      if (storedMessage) {
+        handleSyncMessage(storedMessage)
       }
-    }, 4000)
+    }
+
+    const channel =
+      typeof window !== "undefined" && typeof BroadcastChannel !== "undefined"
+        ? new BroadcastChannel(PRESENTATION_CHANNEL_NAME)
+        : null
+
+    const handleBroadcastSync = (event: MessageEvent) => {
+      const message = normalizePresentationSyncMessage(event.data)
+      if (message) handleSyncMessage(message)
+    }
+
+    const handleStorageSync = (event: StorageEvent) => {
+      if (event.key && event.key !== PRESENTATION_STATE_STORAGE_KEY) return
+      try {
+        const message = event.newValue ? normalizePresentationSyncMessage(JSON.parse(event.newValue)) : null
+        if (message) handleSyncMessage(message)
+      } catch {
+        // Ignore malformed cross-window storage payloads.
+      }
+    }
+
+    handleStoredSyncMessage()
+    channel?.addEventListener("message", handleBroadcastSync)
+    window.addEventListener("storage", handleStorageSync)
+    const intervalId = window.setInterval(() => {
+      handleStoredSyncMessage()
+    }, 1200)
 
     return () => {
       cancelled = true
-      channel?.removeEventListener("message", handleSync)
+      channel?.removeEventListener("message", handleBroadcastSync)
       channel?.close()
+      window.removeEventListener("storage", handleStorageSync)
       window.clearInterval(intervalId)
     }
-  }, [presentationMode, project.id, refreshProject, refreshTick, router])
+  }, [project.id, refreshProject, router])
 
   const familyLabel = blueprint?.gameTypeLabel ?? project.name
 
@@ -131,7 +202,6 @@ export function PresentationScreen({ initialProject }: PresentationScreenProps) 
         spec={spec}
         onRuntimeError={(message) => {
           setRuntimeError(message)
-          setRefreshTick((value) => value + 1)
         }}
       />
 
@@ -176,7 +246,6 @@ export function PresentationScreen({ initialProject }: PresentationScreenProps) 
               variant="outline"
               className="lv-chrome-control pointer-events-auto mt-4 text-white"
               onClick={() => {
-                setRefreshTick((value) => value + 1)
                 void refreshProject(project.id)
               }}
             >
@@ -187,6 +256,14 @@ export function PresentationScreen({ initialProject }: PresentationScreenProps) 
       ) : null}
     </div>
   )
+}
+
+function shouldRefreshProjectForSync(reason: PresentationSyncReason) {
+  return reason === "generation_completed" || reason === "project_opened" || reason === "manual_present"
+}
+
+function shouldShowHomeForProjectSync(reason: PresentationSyncReason) {
+  return reason === "generation_started" || reason === "prompt_submitted" || reason === "project_opened" || reason === "manual_present"
 }
 
 export function PresentationAttractScreen({ status }: { status: string | null }) {

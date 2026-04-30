@@ -1313,8 +1313,8 @@ function updateLook(player: RuntimePlayer, input: RuntimeInputState3D) {
   if (input.look_delta_x === 0 && input.look_delta_y === 0) return
 
   const sensitivity = player.lookSensitivity * 0.0025
-  player.yaw += input.look_delta_x * sensitivity
-  player.pitch = clamp(player.pitch - input.look_delta_y * sensitivity, -MAX_PITCH, MAX_PITCH)
+  player.yaw -= input.look_delta_x * sensitivity
+  player.pitch = clamp(player.pitch + input.look_delta_y * sensitivity, -MAX_PITCH, MAX_PITCH)
 }
 
 function updatePlayerCooldowns(player: RuntimePlayer, deltaMs: number, emit: (event: RuntimeWeb3DEvent) => void) {

@@ -1,4 +1,7 @@
+import type { PrototypeSpec } from "@levelyst/contracts"
+
 export const PRESENTATION_CHANNEL_NAME = "levelyst-presentation"
+export const PRESENTATION_STATE_STORAGE_KEY = "levelyst.presentation.state.v1"
 export const KIOSK_IDLE_RESET_MS = 3 * 60 * 1000
 
 export type PresentationSyncReason =
@@ -22,6 +25,11 @@ export interface PresentationSyncMessage {
   timestamp: number
 }
 
+export interface PresentationSyncStorage {
+  getItem(key: string): string | null
+  setItem(key: string, value: string): void
+}
+
 export function createPresentationSyncMessage(
   input: Omit<PresentationSyncMessage, "type" | "timestamp"> & { timestamp?: number },
 ): PresentationSyncMessage {
@@ -30,6 +38,48 @@ export function createPresentationSyncMessage(
     ...input,
     timestamp: input.timestamp ?? Date.now(),
   }
+}
+
+export function publishPresentationSyncMessage(
+  channel: Pick<BroadcastChannel, "postMessage"> | null | undefined,
+  input: Parameters<typeof createPresentationSyncMessage>[0],
+  storage?: PresentationSyncStorage | null,
+) {
+  const message = createPresentationSyncMessage(input)
+  writePresentationSyncMessage(message, storage)
+  channel?.postMessage(message)
+  return message
+}
+
+export function writePresentationSyncMessage(message: PresentationSyncMessage, storage = resolvePresentationStorage()) {
+  if (!storage) return false
+
+  try {
+    storage.setItem(PRESENTATION_STATE_STORAGE_KEY, JSON.stringify(message))
+    return true
+  } catch {
+    return false
+  }
+}
+
+export function readPresentationSyncMessage(storage = resolvePresentationStorage()) {
+  if (!storage) return null
+
+  try {
+    const raw = storage.getItem(PRESENTATION_STATE_STORAGE_KEY)
+    if (!raw) return null
+    return normalizePresentationSyncMessage(JSON.parse(raw))
+  } catch {
+    return null
+  }
+}
+
+export function isNewerPresentationSyncMessage(message: PresentationSyncMessage, lastTimestamp: number | null) {
+  return lastTimestamp === null || message.timestamp > lastTimestamp
+}
+
+export function createPrototypeSpecFingerprint(spec: PrototypeSpec | null | undefined) {
+  return spec ? stableStringify(spec) : null
 }
 
 export function normalizePresentationSyncMessage(value: unknown): PresentationSyncMessage | null {
@@ -64,6 +114,16 @@ export function normalizePresentationSyncMessage(value: unknown): PresentationSy
   return null
 }
 
+function resolvePresentationStorage(): PresentationSyncStorage | null {
+  if (typeof globalThis === "undefined") return null
+  const candidate = globalThis as typeof globalThis & { localStorage?: PresentationSyncStorage }
+  try {
+    return candidate.localStorage ?? null
+  } catch {
+    return null
+  }
+}
+
 function normalizeReason(value: unknown): PresentationSyncReason {
   return value === "dashboard" ||
     value === "idle_reset" ||
@@ -74,4 +134,20 @@ function normalizeReason(value: unknown): PresentationSyncReason {
     value === "manual_present"
     ? value
     : "project_opened"
+}
+
+function stableStringify(value: unknown): string {
+  if (value === null || typeof value !== "object") {
+    return JSON.stringify(value)
+  }
+
+  if (Array.isArray(value)) {
+    return `[${value.map((entry) => stableStringify(entry)).join(",")}]`
+  }
+
+  const record = value as Record<string, unknown>
+  return `{${Object.keys(record)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${stableStringify(record[key])}`)
+    .join(",")}}`
 }

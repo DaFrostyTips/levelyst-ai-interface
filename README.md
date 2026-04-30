@@ -45,6 +45,45 @@ The app now supports three deployment modes:
    npm run build:pages
    ```
 
+## Grad Show Local Windows Setup
+
+For the exhibition, the safest setup is to run the full app on the Windows PC instead of the hosted Vercel URL. Hosted mode still needs Wi-Fi because the browser sends prompt, generation, project, and database requests to the hosted server. Local mode uses the local Next.js server and SQLite, so prototype generation does not need Wi-Fi after dependencies are installed.
+
+Recommended setup in PowerShell:
+
+```powershell
+git clone git@github.com:DaFrostyTips/levelyst-ai-interface.git
+cd levelyst-ai-interface
+npm ci
+Copy-Item .env.example .env.local
+notepad .env.local
+```
+
+Use these exhibition-safe values in `.env.local`:
+
+```env
+LEVELYST_DEPLOY_MODE=local
+LEVELYST_PLANNER_PROVIDER=rule_based
+LEVELYST_DB_PATH=.levelyst/levelyst.sqlite
+LEVELYST_LOCAL_AI_MODE=off
+```
+
+Build once before the show:
+
+```powershell
+npm run build
+```
+
+Run the local app during the show:
+
+```powershell
+npm run start
+```
+
+Open the main monitor at `http://localhost:3000/kiosk/`. Open the presentation monitor from the app’s presentation button, or use the generated `/present/[projectId]/` URL. Keep both windows in the same browser profile so BroadcastChannel and the localStorage presentation fallback can sync instantly.
+
+OpenAI and Ollama are optional for this flow. Leave `LEVELYST_PLANNER_PROVIDER=rule_based` and `LEVELYST_LOCAL_AI_MODE=off` unless you intentionally want to test those layers.
+
 ## Environment Contract
 
 `.env.example` documents every supported variable. The important production contract is:

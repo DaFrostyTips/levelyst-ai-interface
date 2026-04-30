@@ -1,9 +1,10 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import type { PrototypeSpec } from "@levelyst/contracts"
 import type { RuntimeSnapshot } from "@levelyst/runtime-web-2d"
 import type { RuntimeSnapshot3D } from "@levelyst/runtime-web-3d"
+import { createPrototypeSpecFingerprint } from "@/lib/levelyst/presentation-sync"
 
 interface SimulationViewportProps {
   active: boolean
@@ -28,7 +29,13 @@ export function SimulationViewport({
 }: SimulationViewportProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const onRuntimeErrorRef = useRef(onRuntimeError)
   const [snapshot, setSnapshot] = useState<RuntimeSnapshot | RuntimeSnapshot3D | null>(null)
+  const specFingerprint = useMemo(() => createPrototypeSpecFingerprint(spec), [spec])
+
+  useEffect(() => {
+    onRuntimeErrorRef.current = onRuntimeError
+  }, [onRuntimeError])
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -62,7 +69,7 @@ export function SimulationViewport({
 
     if (!spec) {
       setSnapshot(null)
-      onRuntimeError("Simulation spec is unavailable. Review the AI Blueprint and click Generate Prototype first.")
+      onRuntimeErrorRef.current("Simulation spec is unavailable. Review the AI Blueprint and click Generate Prototype first.")
       return
     }
 
@@ -97,7 +104,7 @@ export function SimulationViewport({
             canvas,
             onEvent(event) {
               if (event.type === "runtime_error") {
-                onRuntimeError(event.message)
+                onRuntimeErrorRef.current(event.message)
                 return
               }
 
@@ -113,7 +120,7 @@ export function SimulationViewport({
             canvas,
             onEvent(event) {
               if (event.type === "runtime_error") {
-                onRuntimeError(event.message)
+                onRuntimeErrorRef.current(event.message)
                 return
               }
 
@@ -137,7 +144,7 @@ export function SimulationViewport({
       } catch (error) {
         const message = error instanceof Error ? error.message : "Runtime failed to start."
         setSnapshot(null)
-        onRuntimeError(message)
+        onRuntimeErrorRef.current(message)
       }
     })()
 
@@ -148,7 +155,7 @@ export function SimulationViewport({
       }
       runtime?.destroy()
     }
-  }, [active, onRuntimeError, spec])
+  }, [active, specFingerprint])
 
   if (!active) return null
 
