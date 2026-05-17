@@ -43,13 +43,12 @@ const featureList = [
   "Prompt-to-blueprint planning with a fast deterministic rule-based builder in public mode.",
   "Anonymous per-browser persistence backed by Neon Postgres.",
   "Interactive node graph editing, prototype generation, and presentation mode.",
-  "Protected kiosk flow with idle reset for grad-show installations.",
+  "Responsive browser-based experience for rapid prototype iteration.",
 ]
 
 const steps = [
   "Browse the static showcase on GitHub Pages.",
   "Open the public Vercel deployment to create and edit projects in your browser.",
-  "Use the protected kiosk route on the grad-show machine for the auto-reset exhibit flow.",
   "Clone the repo only if you want local development or custom deployment changes.",
 ]
 
